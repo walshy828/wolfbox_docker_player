@@ -1,0 +1,19 @@
+services:
+  wolfbox:
+    build: .
+    image: wolfbox-player
+    ports:
+      - "8080:8080"
+    volumes:
+      - wolfbox-cache:/cache
+      # Only needed for the mounted-path fallback: Firefox, or running the
+      # service on a different machine from the card. Chrome and Edge read the
+      # card directly through the browser and need no mount at all.
+      # - /media:/media:ro
+      # - /run/media:/run/media:ro
+    # Uncomment for hardware-accelerated transcoding (VAAPI).
+    # devices:
+    #   - /dev/dri:/dev/dri
+
+volumes:
+  wolfbox-cache:
