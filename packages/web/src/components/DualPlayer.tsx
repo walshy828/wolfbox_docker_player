@@ -5,6 +5,12 @@ import { openClip, type ClipSource } from '../clipSource.ts';
 
 /** Beyond this the slaved camera is seeked; under it, nudged by playback rate. */
 const SYNC_TOLERANCE_SEC = 0.12;
+/**
+ * How often the clock is published. Telemetry is only 1 Hz, so reporting every
+ * animation frame would re-render the map and readout 60 times a second to show
+ * the same values.
+ */
+const CLOCK_INTERVAL_MS = 200;
 /** Proxy width used when transcoding. Two 4K panes side by side help nobody. */
 const PROXY_WIDTH = 1280;
 
@@ -84,16 +90,25 @@ export function DualPlayer({
     if (!front) return;
 
     let frame = 0;
+    let lastPublished = 0;
     const tick = () => {
       frame = requestAnimationFrame(tick);
-      const base = starts.front ?? starts.rear;
-      onClock(base === undefined ? null : base + front.currentTime * 1000);
+
+      const now = performance.now();
+      if (now - lastPublished >= CLOCK_INTERVAL_MS) {
+        lastPublished = now;
+        // A clip whose telemetry never got a fix has no anchor, and NaN here
+        // would silently freeze every downstream lookup rather than clear it.
+        const base = starts.front ?? starts.rear;
+        onClock(Number.isFinite(base) ? base! + front.currentTime * 1000 : null);
+      }
 
       const rear = rearRef.current;
-      if (!rear || rear.readyState < 2 || starts.front === undefined || starts.rear === undefined) return;
+      if (!rear || rear.readyState < 2) return;
+      if (!Number.isFinite(starts.front) || !Number.isFinite(starts.rear)) return;
 
       // Where the rear file should be for the instant the front is showing.
-      const target = (starts.front - starts.rear) / 1000 + front.currentTime;
+      const target = (starts.front! - starts.rear!) / 1000 + front.currentTime;
       if (target < 0 || target > rear.duration) return;
       const drift = target - rear.currentTime;
 

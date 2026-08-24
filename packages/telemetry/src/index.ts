@@ -3,7 +3,9 @@ export { blobReader } from './reader.ts';
 export type { Box, Track } from './mp4.ts';
 export { findMoov, parseTracks } from './mp4.ts';
 export type { TelemetryPoint } from './gpmd.ts';
-export { readTelemetry, findTelemetryTrack, resolveTimestamp } from './gpmd.ts';
+export {
+  readTelemetry, findTelemetryTrack, resolveTimestamp, clipStartMs, SAMPLE_INTERVAL_MS,
+} from './gpmd.ts';
 export type { CleanPoint, CleanOptions } from './clean.ts';
 export { cleanTrack } from './clean.ts';
 export type { LatLon } from './geo.ts';

@@ -37,6 +37,8 @@ export function cleanTrack(points: TelemetryPoint[], options: CleanOptions = {})
   let previous: TelemetryPoint | undefined;
   for (const point of points) {
     if (!point.hasFix) continue;
+    // No fix means no usable date either, so the point cannot be placed in time.
+    if (!Number.isFinite(point.timestampMs)) continue;
     if (point.latitude === 0 && point.longitude === 0) continue;
     // NaN fails every comparison below, so test for finiteness explicitly: a
     // NaN coordinate reaching the map throws and takes the whole route with it.

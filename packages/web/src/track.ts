@@ -1,5 +1,5 @@
 import {
-  blobReader, readTelemetry, cleanTrack, summarize,
+  blobReader, readTelemetry, cleanTrack, summarize, clipStartMs,
   type CleanPoint, type TelemetryPoint, type TripSummary,
 } from '@wolfbox/telemetry';
 import { cacheKey, readCached, writeCached } from './cache.ts';
@@ -54,12 +54,15 @@ export async function loadTripTrack(
     // own first timestamp is what lets the two videos be aligned.
     if (pair.front) {
       const front = await safeTelemetry(pair.front.handle);
-      starts.front = front[0]?.timestampMs;
+      starts.front = clipStartMs(front);
       points.push(...front);
     }
     if (pair.rear) {
-      const rear = await safeTelemetry(pair.rear.handle, pair.front ? 60 : 1);
-      starts.rear = rear[0]?.timestampMs;
+      // The rear file duplicates the track, so it is only sampled for its own
+      // clock. Stride 60 would miss the anchor when the opening samples have no
+      // fix, so read enough of the head to find one.
+      const rear = await safeTelemetry(pair.rear.handle, pair.front ? 5 : 1);
+      starts.rear = clipStartMs(rear);
       if (!pair.front) points.push(...rear);
     }
 
@@ -67,9 +70,40 @@ export async function loadTripTrack(
     onProgress?.(i + 1, trip.clips.length);
   }
 
+  fillMissingStarts(clipStarts, trip);
+
   points.sort((a, b) => a.timestampMs - b.timestampMs);
   const cleaned = cleanTrack(points);
   return { points: cleaned, summary: summarize(cleaned), clipStarts };
+}
+
+/**
+ * Dates clips whose telemetry never got a fix at all.
+ *
+ * Such a clip has no absolute time of its own, but the filename carries the
+ * camera's local clock. Any clip in the trip that *did* get a fix gives the
+ * offset between that local clock and real time, which dates the rest. Without
+ * this a fixless clip anchors playback at nothing and the map stops tracking
+ * for its whole minute.
+ */
+function fillMissingStarts(clipStarts: TripTrack['clipStarts'], trip: CardTrip): void {
+  let offsetMs: number | undefined;
+  for (const [i, starts] of clipStarts.entries()) {
+    const known = starts.front ?? starts.rear;
+    const pair = trip.clips[i];
+    if (known !== undefined && pair) {
+      offsetMs = known - pair.startLocalMs;
+      break;
+    }
+  }
+  if (offsetMs === undefined) return;
+
+  for (const [i, pair] of trip.clips.entries()) {
+    const starts = clipStarts[i] ?? (clipStarts[i] = {});
+    const estimated = pair.startLocalMs + offsetMs;
+    starts.front ??= pair.front ? estimated : undefined;
+    starts.rear ??= pair.rear ? estimated : undefined;
+  }
 }
 
 /** A truncated clip should not sink the trip it belongs to. */
@@ -83,7 +117,9 @@ async function safeTelemetry(handle: FileSystemFileHandle, stride = 1): Promise<
 
 /** Nearest track point to a playback instant, for the map cursor and readout. */
 export function pointAt(points: CleanPoint[], timestampMs: number): CleanPoint | undefined {
-  if (points.length === 0) return undefined;
+  // A NaN cursor makes every comparison below false, which would silently
+  // collapse the search onto the first point and freeze the readout there.
+  if (points.length === 0 || !Number.isFinite(timestampMs)) return undefined;
 
   let low = 0;
   let high = points.length - 1;

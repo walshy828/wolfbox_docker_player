@@ -58,7 +58,12 @@ export function App() {
       signal: controller.signal,
       onProgress: (done, total) => setProgress({ done, total }),
     }).then((result) => {
-      if (!controller.signal.aborted) { setTrack(result); setProgress(null); }
+      if (controller.signal.aborted) return;
+      setTrack(result);
+      setProgress(null);
+      // Put the vehicle on the map at the trip's starting point straight away,
+      // before anything is played.
+      setClockMs((existing) => existing ?? result.points[0]?.timestampMs ?? null);
     });
 
     return () => controller.abort();

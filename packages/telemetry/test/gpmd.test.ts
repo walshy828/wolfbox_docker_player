@@ -2,7 +2,9 @@ import { test, describe, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { existsSync } from 'node:fs';
 import { parseTracks } from '../src/mp4.ts';
-import { readTelemetry, findTelemetryTrack, resolveTimestamp } from '../src/gpmd.ts';
+import {
+  readTelemetry, findTelemetryTrack, resolveTimestamp, clipStartMs,
+} from '../src/gpmd.ts';
 import { cleanTrack } from '../src/clean.ts';
 import { bearingDeg, haversineMeters, kphToMph } from '../src/geo.ts';
 import { fileReader, CARD, REFERENCE_CLIP, REFERENCE_REAR } from './helpers.ts';
@@ -218,5 +220,69 @@ describe('resolveTimestamp', () => {
       resolveTimestamp(local(2026, 8, 4, 13), { hour: 0, minute: 0, second: 0 }),
       utc(2026, 8, 4, 0),
     );
+  });
+});
+
+describe('no-fix date sentinel', () => {
+  // Before the receiver gets a fix the camera writes 0xFFFFFFFF into the date
+  // fields. Date.UTC turns that into NaN, which then propagates into every
+  // downstream time comparison instead of failing loudly.
+  const SENTINEL = 0xffffffff;
+
+  test('resolveTimestamp rejects the sentinel rather than returning NaN silently', () => {
+    const at = resolveTimestamp(
+      { year: SENTINEL, month: SENTINEL, day: SENTINEL, hour: 21, minute: 33, second: 51 },
+      { hour: 21, minute: 33, second: 51 },
+    );
+    assert.ok(Number.isNaN(at));
+  });
+
+  test('resolveTimestamp rejects implausible dates', () => {
+    assert.ok(Number.isNaN(resolveTimestamp(
+      { year: 1970, month: 1, day: 1, hour: 0, minute: 0, second: 0 },
+      { hour: 0, minute: 0, second: 0 })));
+    assert.ok(Number.isNaN(resolveTimestamp(
+      { year: 2026, month: 0, day: 1, hour: 0, minute: 0, second: 0 },
+      { hour: 0, minute: 0, second: 0 })));
+  });
+
+  test('clipStartMs skips leading fixless samples and back-dates to video zero', () => {
+    const anchor = Date.UTC(2026, 7, 4, 21, 33, 34);
+    const points = [
+      { index: 0, timestampMs: Number.NaN },
+      { index: 1, timestampMs: Number.NaN },
+      { index: 2, timestampMs: anchor + 2000 },
+      { index: 3, timestampMs: anchor + 3000 },
+    ] as any[];
+    assert.equal(clipStartMs(points), anchor);
+  });
+
+  test('clipStartMs gives up when nothing in the clip ever had a fix', () => {
+    assert.equal(clipStartMs([{ index: 0, timestampMs: Number.NaN }] as any[]), undefined);
+  });
+});
+
+describe('anchoring a real clip that starts without a fix', { skip: existsSync(CARD) ? false : 'card not mounted' }, () => {
+  // This clip's first sample has the sentinel date; anchoring playback to it
+  // froze the map and the speed readout on the trip's first point.
+  test('the anchor is the clip start, not the first sample', async () => {
+    const clip = await fileReader(`${CARD}/front_norm/2026_08_04_133333_00.MP4`);
+    try {
+      const points = await readTelemetry(clip);
+      assert.ok(Number.isNaN(points[0]!.timestampMs), 'first sample really has no date');
+
+      const anchor = clipStartMs(points);
+      assert.ok(anchor !== undefined && Number.isFinite(anchor));
+      // Clips are 60s, so the next clip in the trip starts a minute later.
+      const next = await fileReader(`${CARD}/front_norm/2026_08_04_133434_00.MP4`);
+      try {
+        const following = clipStartMs(await readTelemetry(next, { stride: 5 }))!;
+        assert.equal((following - anchor!) / 1000, 60);
+      } finally {
+        await next.close();
+      }
+    } finally {
+      await clip.close();
+    }
   });
 });

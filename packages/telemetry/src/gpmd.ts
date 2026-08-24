@@ -48,6 +48,13 @@ const MIN_SAMPLE_SIZE = 0x200;
 /** Scale applied to the raw ddmm.mmmmm coordinate fields. */
 const COORD_SCALE = 1e5;
 
+/**
+ * Before the receiver gets a fix the camera writes 0xFFFFFFFF into the date
+ * fields. Feeding that to Date.UTC yields NaN, which then propagates silently
+ * into every downstream time comparison.
+ */
+const NO_DATE = 0xffffffff;
+
 const DAY_MS = 86_400_000;
 /** Real UTC offsets run from -12:00 to +14:00; anything outside is a rollover. */
 const MAX_UTC_OFFSET_MS = 14 * 3_600_000;
@@ -74,7 +81,11 @@ export interface TelemetryPoint {
   localTime: { year: number; month: number; day: number; hour: number; minute: number; second: number };
   /** UTC time-of-day from the GNSS receiver. */
   utcTime: { hour: number; minute: number; second: number };
-  /** Milliseconds since the epoch, from the local date + UTC time-of-day. */
+  /**
+   * Milliseconds since the epoch, from the local date + UTC time-of-day, or
+   * NaN before the receiver had a fix. Anchor a clip with `clipStartMs` rather
+   * than reading this off the first sample.
+   */
   timestampMs: number;
   latitude: number;
   longitude: number;
@@ -100,12 +111,17 @@ export function findTelemetryTrack(tracks: Track[]): Track | undefined {
  * (an evening drive in the US is already tomorrow in UTC), which would place
  * the clip 24 hours out. Real UTC offsets span -12:00 to +14:00, so an implied
  * offset outside that range means the UTC time belongs to the adjacent day.
+ *
+ * Returns NaN when the camera had no fix and so wrote no usable date.
  */
 export function resolveTimestamp(
   local: { year: number; month: number; day: number; hour: number; minute: number; second: number },
   utc: { hour: number; minute: number; second: number },
 ): number {
   const { year, month, day } = local;
+  // No fix yet: the date is a sentinel, so no absolute instant exists.
+  if (year === NO_DATE || month === NO_DATE || day === NO_DATE) return Number.NaN;
+  if (year < 2000 || year > 2100 || month < 1 || month > 12 || day < 1 || day > 31) return Number.NaN;
   const localNaive = Date.UTC(year, month - 1, day, local.hour, local.minute, local.second);
   let timestampMs = Date.UTC(year, month - 1, day, utc.hour, utc.minute, utc.second);
   const offset = localNaive - timestampMs;
@@ -179,4 +195,25 @@ export async function readTelemetry(
     if (point) points.push(point);
   }
   return points;
+}
+
+/** Telemetry is written once per second of video. */
+export const SAMPLE_INTERVAL_MS = 1000;
+
+/**
+ * The absolute instant of video time zero for one clip.
+ *
+ * Samples run at 1 Hz from the start of the clip, so any sample with a usable
+ * timestamp dates the whole file. This deliberately does not read sample zero:
+ * a clip recorded before the receiver had a fix begins with a run of samples
+ * whose date fields are the 0xFFFFFFFF sentinel, and anchoring playback to one
+ * of those leaves every position and speed lookup missing.
+ */
+export function clipStartMs(points: TelemetryPoint[]): number | undefined {
+  for (const point of points) {
+    if (Number.isFinite(point.timestampMs)) {
+      return point.timestampMs - point.index * SAMPLE_INTERVAL_MS;
+    }
+  }
+  return undefined;
 }
