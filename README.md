@@ -191,23 +191,39 @@ plausible-looking wrong time.
 
 ## Speed colours
 
-Absolute bins, so a colour means the same speed on every trip:
+The route line is a continuous ramp rather than blocks of colour, so an
+acceleration or a braking event reads as a gradient along the road. It tops out
+at **80 mph**, where the colour is a deep red-purple, and stays pinned above
+that so the deepest colour means something definite.
 
-| mph | meaning |
+| mph | band |
 |---|---|
-| stopped | parked or waiting |
-| 1–15 | crawl, parking |
-| 15–30 | residential |
-| 30–45 | arterial |
-| 45–60 | highway |
-| 60+ | fast |
+| stopped | parked or waiting (neutral grey, deliberately outside the ramp) |
+| 1-15 | crawl, parking |
+| 15-35 | residential |
+| 35-60 | route |
+| 60-80 | highway |
+| 80+ | very fast |
 
-The obvious green→red traffic ramp fails for colour-blind readers — Tailwind's
-green/yellow pair sits at ΔE 4.2 under protanopia. These steps were generated in
-OKLCH with monotonically decreasing lightness, so speed is carried by lightness as
-well as hue and the ramp stays readable under any colour vision deficiency. The
-legend is always present and a table view exists, which is what the remaining
-ΔE 6–8 adjacent separation requires.
+The bands label the ramp; they do not divide it. The legend is a gradient bar
+with the boundaries ticked along it, and the trip histogram uses the same
+colours, so a stretch that looks orange on the map is the orange bar in the
+summary.
+
+The obvious green-to-red traffic ramp fails for colour-blind viewers: Tailwind's
+green/yellow pair sits at deltaE 4.2 under protanopia, i.e. indistinguishable.
+The stops here are defined in OKLCH and interpolated there, with
+**monotonically decreasing lightness** from the slow end to the fast end. That
+is the property that matters, and tests assert it across every whole mph in both
+themes: speed survives as a grayscale ramp under any colour vision deficiency,
+and hue is a redundant second channel rather than the only one. Every dark-theme
+step also clears 3:1 against the dark surface.
+
+Checked with the palette validator, adjacent band keys separate well under
+protanopia, deuteranopia and tritanopia. The top two keys sit at deltaE 13 for
+normal vision, slightly under the usual floor of 15 -- unavoidable when both
+"highway" and "very fast" have to be deep colours -- so the legend is always
+present, every histogram bar is directly labelled, and a table view is offered.
 
 ## Layout
 

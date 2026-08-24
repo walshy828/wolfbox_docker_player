@@ -25,8 +25,13 @@ export interface TripSummary {
   harshEvents: { timestampMs: number; deltaKph: number; kind: 'braking' | 'acceleration' }[];
 }
 
-/** Upper bounds in mph, matching the map colour stops. */
-export const SPEED_BUCKETS_MPH = [0, 15, 30, 45, 60, Infinity];
+/**
+ * Band edges in mph, matching the map's speed ramp.
+ *
+ * The top band starts at 80 because that is where the colour ramp tops out, so
+ * "time spent at 80+" is exactly the time painted in the deepest colour.
+ */
+export const SPEED_BUCKETS_MPH = [0, 15, 35, 60, 80, Infinity];
 
 /**
  * A speed change of more than this between consecutive 1 Hz samples is a harsh

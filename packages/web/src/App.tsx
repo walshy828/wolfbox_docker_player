@@ -1,10 +1,10 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { kphToMph, type CleanPoint } from '@wolfbox/telemetry';
 import {
   pickCard, partitionTrips, directoryPickerBlocker,
   type Card, type CardTrip,
 } from './card.ts';
-import { loadTripTrack, pointAt, type TripTrack } from './track.ts';
+import { loadTripTrack, type TripTrack } from './track.ts';
+import { vehicleAt } from './vehicle.ts';
 import { detectPlaybackMode, setPlaybackMode, type PlaybackMode } from './codec.ts';
 import { TripList, type TripFilter, type TripSort } from './components/TripList.tsx';
 import { RouteMap } from './components/RouteMap.tsx';
@@ -107,8 +107,9 @@ export function App() {
     setClockMs(timestampMs);
   }, [track]);
 
-  const current: CleanPoint | undefined =
-    track && clockMs !== null ? pointAt(track.points, clockMs) : undefined;
+  // The same interpolated state the map marker uses, so the readout and the
+  // vehicle can never disagree about where the car is.
+  const current = track ? vehicleAt(track.points, clockMs) : undefined;
 
   const blocker = directoryPickerBlocker();
   const drift = describeCameraDrift(card?.cameraUtcOffsetMs);
@@ -212,7 +213,7 @@ export function App() {
             <div className="readout">
               <div className="readout-main">
                 <span className="readout-speed">
-                  {current ? kphToMph(current.speedKph).toFixed(0) : '--'}
+                  {current ? current.speedMph.toFixed(0) : '--'}
                   <small>mph</small>
                 </span>
                 <span className="spacer" />

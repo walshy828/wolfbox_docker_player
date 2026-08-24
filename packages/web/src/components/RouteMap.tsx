@@ -3,6 +3,7 @@ import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
 import { kphToMph, type CleanPoint } from '@wolfbox/telemetry';
 import { colorForMph, type Theme } from '../speedScale.ts';
+import { vehicleAt } from '../vehicle.ts';
 
 interface Props {
   points: CleanPoint[];
@@ -16,8 +17,6 @@ interface Props {
 
 /** A pause longer than this is a recording gap, not a straight line to draw. */
 const GAP_MS = 10_000;
-/** How far a track point may be from the cursor before the marker is hidden. */
-const CURSOR_TOLERANCE_MS = 5_000;
 /** Keep the vehicle inside this fraction of the viewport when following. */
 const FOLLOW_INSET = 0.7;
 /** How far playback must advance past a fresh fit before the map starts panning. */
@@ -35,17 +34,17 @@ const usable = (p: CleanPoint) =>
  * the line is wide. Its fill is the speed colour, which means the marker and
  * the segment it sits on agree.
  */
-function vehicleIcon(headingDeg: number, color: string): L.DivIcon {
-  const rotation = Number.isFinite(headingDeg) ? headingDeg : 0;
+function vehicleIcon(color: string): L.DivIcon {
   return L.divIcon({
     className: 'vehicle-marker',
-    iconSize: [34, 34],
-    iconAnchor: [17, 17],
+    iconSize: [36, 36],
+    iconAnchor: [18, 18],
     html: `
-      <svg viewBox="0 0 34 34" width="34" height="34" aria-hidden="true"
-           style="transform: rotate(${rotation}deg)">
-        <circle cx="17" cy="17" r="13" fill="#ffffff" fill-opacity="0.9"/>
-        <path d="M17 5 L26 27 L17 21.5 L8 27 Z"
+      <svg viewBox="0 0 36 36" width="36" height="36" aria-hidden="true">
+        <circle cx="18" cy="18" r="14" fill="#ffffff" fill-opacity="0.92"/>
+        <circle cx="18" cy="18" r="14" fill="none" stroke="#1a1a19"
+                stroke-opacity="0.25" stroke-width="1"/>
+        <path d="M18 6 L27.5 29 L18 23.2 L8.5 29 Z"
               fill="${color}" stroke="#1a1a19" stroke-width="1.5" stroke-linejoin="round"/>
       </svg>`,
   });
@@ -67,6 +66,7 @@ export function RouteMap({ points, cursorMs, theme, onSeek }: Props) {
   const [route, setRoute] = useState<L.LayerGroup | null>(null);
   const [following, setFollowing] = useState(true);
   const vehicle = useRef<L.Marker | null>(null);
+  const lastIconColor = useRef<string | null>(null);
   const fitted = useRef<string | null>(null);
   /**
    * The route we still owe a fit. Leaflet computes zoom from the container's
@@ -193,23 +193,37 @@ export function RouteMap({ points, cursorMs, theme, onSeek }: Props) {
   // Move the vehicle marker, and keep it on screen while following.
   useEffect(() => {
     if (!map) return;
-    const current = cursorMs === null ? undefined : nearest(points, cursorMs);
+    const current = vehicleAt(points, cursorMs);
     if (!current) {
       vehicle.current?.remove();
       vehicle.current = null;
+      lastIconColor.current = null;
       return;
     }
 
     const position = L.latLng(current.latitude, current.longitude);
-    const icon = vehicleIcon(
-      current.headingDeg,
-      colorForMph(kphToMph(current.smoothedSpeedKph), theme),
-    );
-    if (vehicle.current) {
-      vehicle.current.setLatLng(position).setIcon(icon);
+    const color = colorForMph(current.speedMph, theme);
+
+    if (!vehicle.current) {
+      vehicle.current = L.marker(position, {
+        icon: vehicleIcon(color), interactive: false, zIndexOffset: 1000,
+      }).addTo(map);
+      lastIconColor.current = color;
     } else {
-      vehicle.current = L.marker(position, { icon, interactive: false, zIndexOffset: 1000 })
-        .addTo(map);
+      vehicle.current.setLatLng(position);
+      // Rebuilding the icon replaces the DOM node, which cancels the CSS
+      // transition that smooths movement, so only do it when the colour has
+      // actually changed rather than on every tick.
+      if (lastIconColor.current !== color) {
+        vehicle.current.setIcon(vehicleIcon(color));
+        lastIconColor.current = color;
+      }
+    }
+
+    // Rotation is applied to the existing node so the arrow turns smoothly.
+    const element = vehicle.current.getElement()?.querySelector('svg');
+    if (element instanceof SVGElement) {
+      element.style.transform = `rotate(${current.headingDeg}deg)`;
     }
 
     if (!followArmed.current && fitCursor.current !== null && cursorMs !== null
@@ -243,7 +257,7 @@ export function RouteMap({ points, cursorMs, theme, onSeek }: Props) {
   const recenter = useCallback(() => {
     setFollowing(true);
     followArmed.current = true;
-    const current = cursorMs === null ? undefined : nearest(points, cursorMs);
+    const current = vehicleAt(points, cursorMs);
     if (map && current) {
       selfPanning.current = true;
       map.panTo([current.latitude, current.longitude], { animate: true });
@@ -277,18 +291,6 @@ export function RouteMap({ points, cursorMs, theme, onSeek }: Props) {
       )}
     </div>
   );
-}
-
-function nearest(points: CleanPoint[], timestampMs: number): CleanPoint | undefined {
-  if (!Number.isFinite(timestampMs)) return undefined;
-  let best: CleanPoint | undefined;
-  let bestDelta = Infinity;
-  for (const point of points) {
-    if (!usable(point)) continue;
-    const delta = Math.abs(point.timestampMs - timestampMs);
-    if (delta < bestDelta) { bestDelta = delta; best = point; }
-  }
-  return bestDelta <= CURSOR_TOLERANCE_MS ? best : undefined;
 }
 
 function nearestByPosition(points: CleanPoint[], lat: number, lon: number): CleanPoint | undefined {

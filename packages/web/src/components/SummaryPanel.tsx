@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { kphToMph, type TripSummary } from '@wolfbox/telemetry';
-import { SPEED_BINS, type Theme } from '../speedScale.ts';
+import { SPEED_BANDS, colorForBand, type Theme } from '../speedScale.ts';
 import { formatAbsolute, type TimeContext } from '../time.ts';
 
 const mi = (meters: number) => meters / 1609.344;
@@ -28,7 +28,7 @@ export function SummaryPanel(
 ) {
   const clock = (ms: number) => formatAbsolute(ms, time, { hour: 'numeric', minute: '2-digit' });
   const [asTable, setAsTable] = useState(false);
-  const buckets = SPEED_BINS.map((bin, i) => ({ bin, seconds: summary.histogramMph[i] ?? 0 }));
+  const buckets = SPEED_BANDS.map((band, i) => ({ band, seconds: summary.histogramMph[i] ?? 0 }));
   const peak = Math.max(...buckets.map((b) => b.seconds), 1);
   const totalBucketed = buckets.reduce((sum, b) => sum + b.seconds, 0);
 
@@ -44,7 +44,7 @@ export function SummaryPanel(
       </dl>
 
       <div className="chart-head">
-        <h3>Time by speed</h3>
+        <h3>Time by speed <span className="muted">mph</span></h3>
         <button className="link" onClick={() => setAsTable((v) => !v)}>
           {asTable ? 'Show chart' : 'Show table'}
         </button>
@@ -57,9 +57,9 @@ export function SummaryPanel(
             <tr><th scope="col">Speed (mph)</th><th scope="col">Time</th><th scope="col">Share</th></tr>
           </thead>
           <tbody>
-            {buckets.map(({ bin, seconds }) => (
-              <tr key={bin.label}>
-                <th scope="row">{bin.label}</th>
+            {buckets.map(({ band, seconds }) => (
+              <tr key={band.label}>
+                <th scope="row">{band.label}</th>
                 <td>{duration(seconds)}</td>
                 <td>{totalBucketed > 0 ? `${Math.round((seconds / totalBucketed) * 100)}%` : '0%'}</td>
               </tr>
@@ -68,15 +68,15 @@ export function SummaryPanel(
         </table>
       ) : (
         <ul className="histogram">
-          {buckets.map(({ bin, seconds }) => (
-            <li key={bin.label}>
-              <span className="histogram-label">{bin.label}</span>
+          {buckets.map(({ band, seconds }) => (
+            <li key={band.label}>
+              <span className="histogram-label">{band.label}</span>
               <span className="histogram-track">
                 <span
                   className="histogram-bar"
                   style={{
                     width: `${(seconds / peak) * 100}%`,
-                    backgroundColor: theme === 'dark' ? bin.dark : bin.light,
+                    backgroundColor: colorForBand(band, theme),
                   }}
                 />
               </span>

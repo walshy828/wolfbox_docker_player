@@ -251,13 +251,29 @@ button.link {
 .readout-speed small { font-size: 14px; font-weight: 400; color: var(--ink-muted); margin-left: 4px; }
 .readout-position { font-size: 12px; color: var(--ink-muted); font-variant-numeric: tabular-nums; }
 
-.legend { padding: 12px 16px; border-top: 1px solid var(--border); }
-.legend h3 { font-size: 12px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--ink-muted); margin: 0 0 6px; }
-.legend ul { list-style: none; margin: 0; padding: 0; display: grid; gap: 4px; }
-.legend li { display: grid; grid-template-columns: 14px 44px 28px 1fr; gap: 8px; align-items: center; font-size: 12px; }
-.legend-swatch { width: 14px; height: 14px; border-radius: 3px; }
+.legend { padding: 10px 16px 12px; border-top: 1px solid var(--border); }
+.legend h3 {
+  font-size: 12px; text-transform: uppercase; letter-spacing: 0.06em;
+  color: var(--ink-muted); margin: 0 0 8px;
+}
+
+.legend-ramp { margin-bottom: 10px; }
+.legend-bar { height: 12px; border-radius: 3px; border: 1px solid var(--border); }
+.legend-ticks { position: relative; height: 14px; }
+.legend-tick {
+  position: absolute; transform: translateX(-50%);
+  font-size: 10px; color: var(--ink-muted); font-variant-numeric: tabular-nums;
+}
+
+.legend-bands { list-style: none; margin: 0; padding: 0; display: grid; gap: 3px; }
+.legend-bands li {
+  display: grid; grid-template-columns: 12px 48px 1fr; gap: 8px;
+  align-items: center; font-size: 12px;
+}
+.legend-swatch { width: 12px; height: 12px; border-radius: 3px; }
 .legend-label { font-variant-numeric: tabular-nums; color: var(--ink); }
 .legend-unit, .legend-note { color: var(--ink-muted); }
+.legend-foot { margin: 8px 0 0; font-size: 11px; color: var(--ink-muted); }
 
 @media (max-width: 1100px) {
   .app { height: auto; min-height: 100vh; overflow: visible; }
@@ -292,4 +308,13 @@ button.link {
   text-align: center; font-size: 13px; color: var(--ink-secondary);
   background: var(--surface-raised); border: 1px solid var(--border);
   border-radius: var(--radius); padding: 8px 12px;
+}
+
+/* Telemetry is 1 Hz and the clock ticks at 5 Hz, so ease between updates to
+   turn a series of small steps into continuous motion along the road. */
+.vehicle-marker { transition: transform 0.2s linear; }
+.vehicle-marker svg { transition: transform 0.25s ease-out; }
+
+@media (prefers-reduced-motion: reduce) {
+  .vehicle-marker, .vehicle-marker svg { transition: none; }
 }

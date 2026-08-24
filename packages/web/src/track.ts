@@ -114,22 +114,3 @@ async function safeTelemetry(handle: FileSystemFileHandle, stride = 1): Promise<
     return [];
   }
 }
-
-/** Nearest track point to a playback instant, for the map cursor and readout. */
-export function pointAt(points: CleanPoint[], timestampMs: number): CleanPoint | undefined {
-  // A NaN cursor makes every comparison below false, which would silently
-  // collapse the search onto the first point and freeze the readout there.
-  if (points.length === 0 || !Number.isFinite(timestampMs)) return undefined;
-
-  let low = 0;
-  let high = points.length - 1;
-  while (low < high) {
-    const mid = (low + high) >> 1;
-    if (points[mid]!.timestampMs < timestampMs) low = mid + 1;
-    else high = mid;
-  }
-  const after = points[low]!;
-  const before = points[low - 1];
-  if (!before) return after;
-  return timestampMs - before.timestampMs <= after.timestampMs - timestampMs ? before : after;
-}

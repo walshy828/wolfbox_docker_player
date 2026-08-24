@@ -61,11 +61,18 @@ describe('summarize', () => {
 
   // A real trip on the reference card reported a 44 mph maximum but contained
   // one 161 km/h sample -- under the outlier clamp, yet obviously wrong.
+  test('time above the ramp top lands in the 80+ band', () => {
+    // 145 km/h is 90 mph.
+    const s = summarize(cleanTrack(run([145, 145, 145, 145])))!;
+    assert.ok(s.histogramMph[4]! > 0, 'expected time in the 80+ band');
+    assert.equal(s.histogramMph[3], 0);
+  });
+
   test('an isolated spike does not become the trip maximum', () => {
     const s = summarize(cleanTrack(run([50, 50, 50, 161, 50, 50, 50])))!;
     assert.equal(s.maxSpeedKph, 50);
     assert.equal(s.harshEvents.length, 0);
-    assert.equal(s.histogramMph[4], 0, 'nothing lands in the 60+ mph bucket');
+    assert.equal(s.histogramMph[4], 0, 'nothing lands in the 80+ mph bucket');
   });
 
   test('a sustained high speed is kept', () => {
@@ -74,10 +81,10 @@ describe('summarize', () => {
   });
 
   test('buckets time by speed and bounds the route', () => {
-    // 20 mph -> bucket 1 (15-30), 50 mph -> bucket 3 (45-60).
+    // 20 mph -> bucket 1 (15-35), 50 mph -> bucket 2 (35-60).
     const s = summarize(cleanTrack(run([32.2, 32.2, 32.2, 80.5, 80.5, 80.5])))!;
     assert.ok(s.histogramMph[1]! > 0);
-    assert.ok(s.histogramMph[3]! > 0);
+    assert.ok(s.histogramMph[2]! > 0);
     assert.equal(s.histogramMph[5], undefined);
     assert.ok(s.bounds!.east > s.bounds!.west);
     assert.equal(s.bounds!.north, 42.1);
