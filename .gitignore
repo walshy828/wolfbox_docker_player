@@ -1,0 +1,7 @@
+node_modules/
+dist/
+*.tsbuildinfo
+.DS_Store
+fixtures/*.MP4
+__pycache__/
+.venv/
