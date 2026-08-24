@@ -6,12 +6,19 @@ import {
 } from './card.ts';
 import { loadTripTrack, pointAt, type TripTrack } from './track.ts';
 import { detectPlaybackMode, setPlaybackMode, type PlaybackMode } from './codec.ts';
-import { TripList } from './components/TripList.tsx';
+import { TripList, type TripFilter, type TripSort } from './components/TripList.tsx';
 import { RouteMap } from './components/RouteMap.tsx';
 import { DualPlayer } from './components/DualPlayer.tsx';
 import { SummaryPanel } from './components/SummaryPanel.tsx';
 import { SpeedLegend } from './components/SpeedLegend.tsx';
+import { ExpandButton } from './components/ExpandButton.tsx';
+import {
+  TIME_ZONES, useTimeZoneSetting, formatLocal, describeCameraDrift, type TimeContext,
+} from './time.ts';
 import type { Theme } from './speedScale.ts';
+
+/** Which panel, if any, is filling the window. */
+type Expanded = 'video' | 'map' | null;
 
 export function App() {
   const [card, setCard] = useState<Card | null>(null);
@@ -22,10 +29,29 @@ export function App() {
   const [clockMs, setClockMs] = useState<number | null>(null);
   const [mode, setMode] = useState<PlaybackMode | null>(null);
   const [layout, setLayout] = useState<'split' | 'front' | 'rear'>('split');
+  const [filter, setFilter] = useState<TripFilter>('drives');
+  const [sort, setSort] = useState<TripSort>('newest');
+  const [expanded, setExpanded] = useState<Expanded>(null);
   const [error, setError] = useState<string | null>(null);
+  const [zone, setZone] = useTimeZoneSetting();
   const theme = useTheme();
 
+  const time: TimeContext = useMemo(
+    () => ({ zone, cameraUtcOffsetMs: card?.cameraUtcOffsetMs }),
+    [zone, card?.cameraUtcOffsetMs],
+  );
+
   useEffect(() => { void detectPlaybackMode().then(setMode); }, []);
+
+  // Escape leaves full screen, which is what every other viewer does.
+  useEffect(() => {
+    if (!expanded) return;
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setExpanded(null);
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [expanded]);
 
   const { drives, events } = useMemo(
     () => (card ? partitionTrips(card.trips) : { drives: [], events: [] }),
@@ -70,8 +96,7 @@ export function App() {
   }, [trip]);
 
   const seek = useCallback((timestampMs: number) => {
-    if (!track || !trip) return;
-    // Jump to the clip that contains this instant, then into it.
+    if (!track) return;
     const index = track.clipStarts.findIndex((starts, i) => {
       const start = starts.front ?? starts.rear;
       const next = track.clipStarts[i + 1];
@@ -80,12 +105,13 @@ export function App() {
     });
     if (index >= 0) setClipIndex(index);
     setClockMs(timestampMs);
-  }, [track, trip]);
+  }, [track]);
 
   const current: CleanPoint | undefined =
     track && clockMs !== null ? pointAt(track.points, clockMs) : undefined;
 
   const blocker = directoryPickerBlocker();
+  const drift = describeCameraDrift(card?.cameraUtcOffsetMs);
 
   return (
     <div className="app" data-theme={theme}>
@@ -96,6 +122,15 @@ export function App() {
         </button>
         {card && <span className="card-name">{card.name} · {card.clips.length} clips</span>}
         <span className="spacer" />
+        <label className="zone-picker">
+          Times in
+          <select value={zone} onChange={(event) => setZone(event.target.value)}>
+            {TIME_ZONES.map((option) => (
+              <option key={option.value} value={option.value}>{option.label}</option>
+            ))}
+          </select>
+        </label>
+        {drift && zone !== 'camera' && <span className="badge" title={drift}>{drift}</span>}
         {mode && <PlaybackBadge mode={mode} onOverride={(next) => { setPlaybackMode(next); setMode(next); }} />}
       </header>
 
@@ -116,10 +151,43 @@ export function App() {
         <main className="layout">
           <TripList
             drives={drives} events={events}
+            filter={filter} sort={sort}
+            onFilterChange={setFilter} onSortChange={setSort}
             selectedId={trip?.id ?? null} onSelect={setTrip}
+            time={time}
           />
 
-          <div className="workspace">
+          <section className={panelClass('workspace', expanded === 'video')}>
+            <div className="panel-head">
+              <h2>
+                {trip
+                  ? formatLocal(trip.startLocalMs, time,
+                      { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })
+                  : 'No trip selected'}
+              </h2>
+              {trip && (
+                <div className="layout-controls" role="group" aria-label="Camera layout">
+                  {(['split', 'front', 'rear'] as const).map((option) => (
+                    <button
+                      key={option}
+                      className={layout === option ? 'chip selected' : 'chip'}
+                      onClick={() => setLayout(option)}
+                      aria-pressed={layout === option}
+                    >
+                      {option === 'split' ? 'Both' : option === 'front' ? 'Front' : 'Rear'}
+                    </button>
+                  ))}
+                </div>
+              )}
+              <span className="spacer" />
+              {trip && (
+                <ExpandButton
+                  expanded={expanded === 'video'} label="video"
+                  onToggle={() => setExpanded(expanded === 'video' ? null : 'video')}
+                />
+              )}
+            </div>
+
             {!trip && <p className="muted pad">Choose a trip to review it.</p>}
 
             {trip && mode && (
@@ -130,36 +198,29 @@ export function App() {
               />
             )}
 
-            {trip && (
-              <div className="layout-controls" role="group" aria-label="Camera layout">
-                {(['split', 'front', 'rear'] as const).map((option) => (
-                  <button
-                    key={option}
-                    className={layout === option ? 'chip selected' : 'chip'}
-                    onClick={() => setLayout(option)}
-                    aria-pressed={layout === option}
-                  >
-                    {option === 'split' ? 'Both' : option === 'front' ? 'Front only' : 'Rear only'}
-                  </button>
-                ))}
-              </div>
-            )}
+            <div className="workspace-scroll">
+              {progress && (
+                <p className="notice">
+                  Reading GPS from clip {progress.done} of {progress.total}...
+                </p>
+              )}
+              {track?.summary && <SummaryPanel summary={track.summary} theme={theme} time={time} />}
+            </div>
+          </section>
 
-            {progress && (
-              <p className="notice">
-                Reading GPS from clip {progress.done} of {progress.total}...
-              </p>
-            )}
-
-            {track?.summary && <SummaryPanel summary={track.summary} theme={theme} />}
-          </div>
-
-          <aside className="map-column">
+          <aside className={panelClass('map-column', expanded === 'map')}>
             <div className="readout">
-              <span className="readout-speed">
-                {current ? kphToMph(current.speedKph).toFixed(0) : '--'}
-                <small>mph</small>
-              </span>
+              <div className="readout-main">
+                <span className="readout-speed">
+                  {current ? kphToMph(current.speedKph).toFixed(0) : '--'}
+                  <small>mph</small>
+                </span>
+                <span className="spacer" />
+                <ExpandButton
+                  expanded={expanded === 'map'} label="map"
+                  onToggle={() => setExpanded(expanded === 'map' ? null : 'map')}
+                />
+              </div>
               <span className="readout-position">
                 {current
                   ? `${current.latitude.toFixed(5)}, ${current.longitude.toFixed(5)}`
@@ -177,6 +238,9 @@ export function App() {
     </div>
   );
 }
+
+const panelClass = (base: string, expanded: boolean) =>
+  expanded ? `${base} panel panel--expanded` : `${base} panel`;
 
 function PlaybackBadge({ mode, onOverride }: { mode: PlaybackMode; onOverride: (m: PlaybackMode) => void }) {
   if (mode === 'direct') {

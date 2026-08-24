@@ -1,5 +1,5 @@
 import {
-  parseClipName, buildTrips, CLIP_FOLDERS,
+  parseClipName, buildTrips, CLIP_FOLDERS, blobReader, readTelemetry, clipStartMs,
   type ClipRef, type Trip,
 } from '@wolfbox/telemetry';
 
@@ -11,6 +11,16 @@ export interface Card {
   name: string;
   clips: CardClip[];
   trips: CardTrip[];
+  /**
+   * How far the camera's own clock sits from real time, in milliseconds.
+   *
+   * Filenames carry a naive local reading with no zone attached, so this is
+   * what places them on the real timeline. Cameras are routinely set to the
+   * wrong zone -- the reference card was recorded in Massachusetts by a camera
+   * still on UTC-8 -- which is why displaying times in a chosen zone needs it.
+   * Undefined when no clip on the card ever got a GPS fix.
+   */
+  cameraUtcOffsetMs?: number;
 }
 
 export function supportsDirectoryPicker(): boolean {
@@ -64,7 +74,42 @@ export async function readCard(root: FileSystemDirectoryHandle): Promise<Card> {
     }
   }
 
-  return { name: root.name, clips, trips: buildTrips(clips) };
+  return {
+    name: root.name,
+    clips,
+    trips: buildTrips(clips),
+    cameraUtcOffsetMs: await detectCameraOffset(clips),
+  };
+}
+
+/** Clips to try before giving up on learning the camera's clock offset. */
+const OFFSET_PROBE_LIMIT = 4;
+
+/**
+ * Measures the camera's clock error from the first clip that has a GPS fix.
+ *
+ * Telemetry carries both the camera's local reading and the receiver's UTC
+ * time, so one clip is enough. Reading a clip's telemetry is expensive, hence
+ * the small probe budget: a card whose first few clips never got a fix falls
+ * back to showing the camera's clock as recorded.
+ */
+async function detectCameraOffset(clips: CardClip[]): Promise<number | undefined> {
+  const candidates = clips
+    .filter((clip) => clip.kind === 'normal')
+    .sort((a, b) => a.startLocalMs - b.startLocalMs)
+    .slice(0, OFFSET_PROBE_LIMIT);
+
+  for (const clip of candidates) {
+    try {
+      const file = await clip.handle.getFile();
+      const points = await readTelemetry(blobReader(file), { stride: 5 });
+      const absolute = clipStartMs(points);
+      if (absolute !== undefined) return clip.startLocalMs - absolute;
+    } catch {
+      // A truncated clip is not worth failing the whole card over.
+    }
+  }
+  return undefined;
 }
 
 /**

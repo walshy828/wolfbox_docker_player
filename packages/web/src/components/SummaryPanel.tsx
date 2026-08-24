@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { kphToMph, type TripSummary } from '@wolfbox/telemetry';
 import { SPEED_BINS, type Theme } from '../speedScale.ts';
+import { formatAbsolute, type TimeContext } from '../time.ts';
 
 const mi = (meters: number) => meters / 1609.344;
 
@@ -12,8 +13,7 @@ function duration(seconds: number): string {
   return h > 0 ? `${h}h ${m}m` : m > 0 ? `${m}m ${s}s` : `${s}s`;
 }
 
-const clock = (ms: number) =>
-  new Date(ms).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+
 
 /**
  * Trip metrics, plus how the drive's time was spent across the speed bands.
@@ -23,7 +23,10 @@ const clock = (ms: number) =>
  * directly labelled and a table view is available, which is what lets the
  * colour ramp stay legible without relying on colour alone.
  */
-export function SummaryPanel({ summary, theme }: { summary: TripSummary; theme: Theme }) {
+export function SummaryPanel(
+  { summary, theme, time }: { summary: TripSummary; theme: Theme; time: TimeContext },
+) {
+  const clock = (ms: number) => formatAbsolute(ms, time, { hour: 'numeric', minute: '2-digit' });
   const [asTable, setAsTable] = useState(false);
   const buckets = SPEED_BINS.map((bin, i) => ({ bin, seconds: summary.histogramMph[i] ?? 0 }));
   const peak = Math.max(...buckets.map((b) => b.seconds), 1);

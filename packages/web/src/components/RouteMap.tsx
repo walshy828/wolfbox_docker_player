@@ -10,6 +10,8 @@ interface Props {
   cursorMs: number | null;
   theme: Theme;
   onSeek: (timestampMs: number) => void;
+  /** Re-frames the whole route. Offered whenever the user has panned away. */
+  onRefit?: () => void;
 }
 
 /** A pause longer than this is a recording gap, not a straight line to draw. */
@@ -18,6 +20,8 @@ const GAP_MS = 10_000;
 const CURSOR_TOLERANCE_MS = 5_000;
 /** Keep the vehicle inside this fraction of the viewport when following. */
 const FOLLOW_INSET = 0.7;
+/** How far playback must advance past a fresh fit before the map starts panning. */
+const ARM_FOLLOW_AFTER_MS = 2_000;
 
 const usable = (p: CleanPoint) =>
   Number.isFinite(p.latitude) && Number.isFinite(p.longitude) &&
@@ -64,6 +68,24 @@ export function RouteMap({ points, cursorMs, theme, onSeek }: Props) {
   const [following, setFollowing] = useState(true);
   const vehicle = useRef<L.Marker | null>(null);
   const fitted = useRef<string | null>(null);
+  /**
+   * The route we still owe a fit. Leaflet computes zoom from the container's
+   * pixel size, so fitting while the pane is still unsized -- which is the norm
+   * for a grid child on first paint, and for a panel that was just expanded --
+   * silently produces the wrong zoom or no move at all. The fit is retried
+   * until it happens against a container with real dimensions.
+   */
+  const pendingFit = useRef<L.LatLngBounds | null>(null);
+  /**
+   * Auto-panning stays disarmed until playback actually moves.
+   *
+   * A freshly fitted route puts the vehicle at the very edge of the bounds --
+   * it starts at one end of the line -- so an eager follow would immediately
+   * pan to the start and throw away the whole-route view the fit just
+   * produced. Arm only once the clock has advanced.
+   */
+  const followArmed = useRef(false);
+  const fitCursor = useRef<number | null>(null);
   // Distinguishes our own panTo calls from the user dragging the map.
   const selfPanning = useRef(false);
 
@@ -81,7 +103,10 @@ export function RouteMap({ points, cursorMs, theme, onSeek }: Props) {
     // Leaflet caches the container size at construction. In a grid/flex layout
     // the pane is often still unsized then, which leaves the map convinced it
     // is tiny and puts fitBounds at the wrong zoom.
-    const resize = new ResizeObserver(() => instance.invalidateSize());
+    const resize = new ResizeObserver(() => {
+      instance.invalidateSize();
+      applyPendingFit(instance);
+    });
     resize.observe(container.current);
 
     // Dragging the map is a deliberate choice to look elsewhere; stop chasing
@@ -137,16 +162,33 @@ export function RouteMap({ points, cursorMs, theme, onSeek }: Props) {
     // Frame the new trip, and resume following it.
     const key = `${start.timestampMs}:${track.length}`;
     if (fitted.current !== key) {
-      map.invalidateSize();
-      selfPanning.current = true;
-      map.fitBounds(L.latLngBounds(track.map((p) => [p.latitude, p.longitude])), {
-        padding: [24, 24],
-      });
-      selfPanning.current = false;
       fitted.current = key;
+      pendingFit.current = L.latLngBounds(track.map((p) => [p.latitude, p.longitude]));
+      followArmed.current = false;
+      fitCursor.current = cursorMs;
       setFollowing(true);
+      map.invalidateSize();
+      applyPendingFit(map);
     }
   }, [map, route, points, theme]);
+
+  /**
+   * Fits the outstanding route, if the map is big enough to be fitted to.
+   *
+   * Clears the request only on success, so a fit requested against a
+   * zero-height pane is honoured as soon as the pane gets its size.
+   */
+  function applyPendingFit(instance: L.Map): void {
+    const bounds = pendingFit.current;
+    if (!bounds || !bounds.isValid()) return;
+    const size = instance.getSize();
+    if (size.x < 40 || size.y < 40) return;
+
+    selfPanning.current = true;
+    instance.fitBounds(bounds, { padding: [28, 28], animate: false });
+    selfPanning.current = false;
+    pendingFit.current = null;
+  }
 
   // Move the vehicle marker, and keep it on screen while following.
   useEffect(() => {
@@ -170,7 +212,15 @@ export function RouteMap({ points, cursorMs, theme, onSeek }: Props) {
         .addTo(map);
     }
 
-    if (following && !map.getBounds().pad(-(1 - FOLLOW_INSET)).contains(position)) {
+    if (!followArmed.current && fitCursor.current !== null && cursorMs !== null
+        && Math.abs(cursorMs - fitCursor.current) > ARM_FOLLOW_AFTER_MS) {
+      followArmed.current = true;
+    }
+
+    // Never pan while a fit is still owed, or the vehicle would drag the view
+    // off the route the user has not been shown yet.
+    if (following && followArmed.current && !pendingFit.current
+        && !map.getBounds().pad(-(1 - FOLLOW_INSET)).contains(position)) {
       selfPanning.current = true;
       map.panTo(position, { animate: true, duration: 0.4 });
       // Leaflet fires dragstart synchronously only for real drags, but the pan
@@ -192,6 +242,7 @@ export function RouteMap({ points, cursorMs, theme, onSeek }: Props) {
 
   const recenter = useCallback(() => {
     setFollowing(true);
+    followArmed.current = true;
     const current = cursorMs === null ? undefined : nearest(points, cursorMs);
     if (map && current) {
       selfPanning.current = true;
@@ -200,11 +251,29 @@ export function RouteMap({ points, cursorMs, theme, onSeek }: Props) {
     }
   }, [map, cursorMs, points]);
 
+  const refit = useCallback(() => {
+    if (!map) return;
+    const track = points.filter(usable);
+    if (track.length === 0) return;
+    pendingFit.current = L.latLngBounds(track.map((p) => [p.latitude, p.longitude]));
+    followArmed.current = false;
+    fitCursor.current = cursorMs;
+    map.invalidateSize();
+    applyPendingFit(map);
+    setFollowing(true);
+  }, [map, points, cursorMs]);
+
   return (
     <div className="route-map-wrap">
       <div ref={container} className="route-map" role="application" aria-label="Route map" />
-      {!following && points.length > 0 && (
-        <button className="map-follow" onClick={recenter}>Follow vehicle</button>
+      {points.length === 0 && (
+        <p className="map-empty">No GPS positions for this trip yet.</p>
+      )}
+      {points.length > 0 && (
+        <div className="map-actions">
+          <button onClick={refit} title="Zoom to fit the whole route">Whole route</button>
+          {!following && <button onClick={recenter}>Follow vehicle</button>}
+        </div>
       )}
     </div>
   );

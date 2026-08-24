@@ -2,9 +2,11 @@
   "name": "wolfbox-player",
   "private": true,
   "version": "0.1.0",
-  "workspaces": ["packages/*"],
+  "workspaces": [
+    "packages/*"
+  ],
   "scripts": {
-    "test": "npm run test -w @wolfbox/telemetry",
+    "test": "npm run test -w @wolfbox/telemetry && npm run test -w @wolfbox/web",
     "build": "npm run build -w @wolfbox/telemetry"
   }
 }

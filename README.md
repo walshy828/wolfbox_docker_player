@@ -162,6 +162,33 @@ Clips are 60 s, named `YYYY_MM_DD_HHMMSS_<cam>[_b].MP4`.
   offset, so a naive pairing puts the clip 24 hours in the past.
 - **Nothing snaps to roads.** Not every drive is on one.
 
+## Using it
+
+The window is three columns that scroll independently, so a long trip list can
+never push the player or the map out of view:
+
+- **Left** — trips, filterable by drives / parking events and sortable by
+  newest (the default), oldest or longest. A card is a rolling loop, so the
+  drive worth reviewing is nearly always the most recent one.
+- **Centre** — front and rear video, pinned in place; the trip summary scrolls
+  beneath it.
+- **Right** — the route map, speed readout and colour legend.
+
+The video and the map each have an expand control that fills the window, and
+Escape or the collapse control returns them. Expanding applies fixed
+positioning to the existing element rather than moving it in the tree, so the
+video keeps playing from where it was and the map keeps its tiles and view.
+
+### Time zones
+
+Dash cams are routinely set to the wrong zone -- the reference card was
+recorded in Massachusetts by a camera still on UTC-8. **Times in** in the header
+switches between the clock the camera stamped and any real zone. Filenames carry
+only a naive local reading, so converting them needs the camera's offset, which
+is measured once per card from the first clip that has a GPS fix. Where that
+offset cannot be measured the raw camera clock is shown rather than a
+plausible-looking wrong time.
+
 ## Speed colours
 
 Absolute bins, so a colour means the same speed on every trip:
