@@ -38,6 +38,9 @@ export function cleanTrack(points: TelemetryPoint[], options: CleanOptions = {})
   for (const point of points) {
     if (!point.hasFix) continue;
     if (point.latitude === 0 && point.longitude === 0) continue;
+    // NaN fails every comparison below, so test for finiteness explicitly: a
+    // NaN coordinate reaching the map throws and takes the whole route with it.
+    if (!Number.isFinite(point.latitude) || !Number.isFinite(point.longitude)) continue;
     if (Math.abs(point.latitude) > 90 || Math.abs(point.longitude) > 180) continue;
     if (!Number.isFinite(point.speedKph) || point.speedKph < 0 || point.speedKph > maxSpeedKph) continue;
 

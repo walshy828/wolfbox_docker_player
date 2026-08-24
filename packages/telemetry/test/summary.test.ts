@@ -15,7 +15,8 @@ const run = (speeds: number[]): TelemetryPoint[] =>
     latitude: 42.1,
     // ~0.0001 degrees of longitude per second at this latitude is ~8.3m/s.
     longitude: -71.3 + i * 0.0001,
-    speedKph: speedKph,
+    speedKph,
+    speedKnots: speedKph / 1.852,
     headingDeg: 90,
     accel: { x: 0, y: 0, z: 0 },
     hasFix: true,

@@ -8,17 +8,18 @@ import { parseTracks, type Track } from './mp4.ts';
  * a `gpmd` sample entry. Despite the fourcc this is NOT GoPro GPMF: it is a
  * flat little-endian C struct, one 1000-byte sample per second of video.
  *
- * Field offsets below were recovered by decoding all 728 clips of a reference
- * card (41,881 points) and cross-checking three ways:
- *   - `HEADING` matches the bearing computed from consecutive fixes to <0.5deg
- *   - straight-line distance over 20s (368m) is consistent with the
- *     speed-integrated path (335m); reading the coordinates as NMEA
- *     ddmm.mmmmm instead gives 683m, which is geometrically impossible
- *   - decoded positions reverse-geocode to real roads (Millis, Massachusetts)
+ * The record is a decoded NMEA RMC sentence, and it keeps NMEA's units:
+ * coordinates are `ddmm.mmmmm` (degrees and decimal *minutes*, not decimal
+ * degrees) and speed over ground is in knots. The u64 that follows each value
+ * is its scale factor, and the firmware really does apply it -- coordinates are
+ * scaled by 100000, speed by 1000. A converted km/h speed is provided at
+ * SPEED_KPH.
  *
- * Each coordinate is followed by a u64 literal 100000 that looks like a scale
- * factor. It is not applied by the firmware -- coordinates are plain 1e-7
- * degrees. Ignore it.
+ * Ground truth: the camera burns its own position and speed into the video. For
+ * `front_norm/2026_08_04_133634_00.MP4` at 13:37:07 the overlay reads
+ * "W71.4938 N42.2969 64.1MPH", and this table decodes that sample to
+ * 42.29686, -71.49383, 103.605 km/h (64.4 mph). GPS-derived speed over the
+ * surrounding samples is 103-105 km/h, agreeing to about 1%.
  *
  * The i64 fields at 0x28/0x38 also look like coordinates but are noise.
  */
@@ -29,7 +30,7 @@ const OFF = {
   MINUTE: 0x14,     // u32
   SECOND: 0x18,     // u32
   FIX: 0x20,        // u64, 1 = GPS fix valid
-  SPEED: 0x48,      // i64, / 1000 -> km/h
+  SPEED_KNOTS: 0x48,// i64, / 1000 -> knots (NMEA speed over ground)
   HEADING: 0x58,    // i64, / 100  -> degrees true
   DAY: 0x68,        // u32
   MONTH: 0x6c,      // u32
@@ -37,13 +38,34 @@ const OFF = {
   UTC_HOUR: 0xa0,   // u32
   UTC_MINUTE: 0xa4, // u32
   UTC_SECOND: 0xa8, // u32
-  LATITUDE: 0xb0,   // i64, / 1e7 -> decimal degrees
-  LONGITUDE: 0xc0,  // i64, / 1e7 -> decimal degrees
+  LATITUDE: 0xb0,   // i64, / 1e5 -> ddmm.mmmmm
+  LONGITUDE: 0xc0,  // i64, / 1e5 -> ddmm.mmmmm
+  SPEED_KPH: 0x1f8, // i64, / 1000 -> km/h
 } as const;
 
 /** Smallest sample we can decode without running off the end. */
-const MIN_SAMPLE_SIZE = 0xd0;
-const COORD_SCALE = 1e7;
+const MIN_SAMPLE_SIZE = 0x200;
+/** Scale applied to the raw ddmm.mmmmm coordinate fields. */
+const COORD_SCALE = 1e5;
+
+const DAY_MS = 86_400_000;
+/** Real UTC offsets run from -12:00 to +14:00; anything outside is a rollover. */
+const MAX_UTC_OFFSET_MS = 14 * 3_600_000;
+const MIN_UTC_OFFSET_MS = -12 * 3_600_000;
+
+/**
+ * Converts NMEA `ddmm.mmmmm` to decimal degrees.
+ *
+ * 4229.686 is 42 degrees and 29.686 minutes, i.e. 42.29477 -- not 42.29686.
+ * Reading these fields as decimal degrees puts a route tens of kilometres from
+ * where it was driven while still looking superficially plausible.
+ */
+function nmeaToDegrees(raw: number): number {
+  const value = Math.abs(raw) / COORD_SCALE;
+  const degrees = Math.floor(value / 100);
+  const minutes = value - degrees * 100;
+  return Math.sign(raw) * (degrees + minutes / 60);
+}
 
 export interface TelemetryPoint {
   /** Sample index within the clip; also its offset in seconds from clip start. */
@@ -57,6 +79,8 @@ export interface TelemetryPoint {
   latitude: number;
   longitude: number;
   speedKph: number;
+  /** Speed over ground as the receiver reported it, in knots. */
+  speedKnots: number;
   headingDeg: number;
   accel: { x: number; y: number; z: number };
   hasFix: boolean;
@@ -67,35 +91,56 @@ export function findTelemetryTrack(tracks: Track[]): Track | undefined {
   return tracks.find((t) => t.format === 'gpmd');
 }
 
+/**
+ * Combines the camera's local date with the receiver's UTC time-of-day.
+ *
+ * The date fields are local, time-of-day is recorded in both zones, and the
+ * camera never records its UTC offset -- so pairing the local date with the UTC
+ * time is the only sound anchor. Near midnight the two are on different dates
+ * (an evening drive in the US is already tomorrow in UTC), which would place
+ * the clip 24 hours out. Real UTC offsets span -12:00 to +14:00, so an implied
+ * offset outside that range means the UTC time belongs to the adjacent day.
+ */
+export function resolveTimestamp(
+  local: { year: number; month: number; day: number; hour: number; minute: number; second: number },
+  utc: { hour: number; minute: number; second: number },
+): number {
+  const { year, month, day } = local;
+  const localNaive = Date.UTC(year, month - 1, day, local.hour, local.minute, local.second);
+  let timestampMs = Date.UTC(year, month - 1, day, utc.hour, utc.minute, utc.second);
+  const offset = localNaive - timestampMs;
+  if (offset > MAX_UTC_OFFSET_MS) timestampMs += DAY_MS;
+  else if (offset < MIN_UTC_OFFSET_MS) timestampMs -= DAY_MS;
+  return timestampMs;
+}
+
 function decodeSample(view: DataView, index: number): TelemetryPoint | null {
   if (view.byteLength < MIN_SAMPLE_SIZE) return null;
 
   const year = Number(view.getBigUint64(OFF.YEAR, true));
   const month = view.getUint32(OFF.MONTH, true);
   const day = view.getUint32(OFF.DAY, true);
+  const hour = view.getUint32(OFF.HOUR, true);
+  const minute = view.getUint32(OFF.MINUTE, true);
+  const second = view.getUint32(OFF.SECOND, true);
   const utcHour = view.getUint32(OFF.UTC_HOUR, true);
   const utcMinute = view.getUint32(OFF.UTC_MINUTE, true);
   const utcSecond = view.getUint32(OFF.UTC_SECOND, true);
 
-  // The date fields are local but time-of-day is recorded in both zones. Pair
-  // the local date with the UTC time-of-day to get an absolute instant -- the
-  // camera never records its UTC offset, so this is the only sound anchor.
-  // Around midnight the two disagree by a day; callers correct with `fixDateRollover`.
-  const timestampMs = Date.UTC(year, month - 1, day, utcHour, utcMinute, utcSecond);
+  const timestampMs = resolveTimestamp(
+    { year, month, day, hour, minute, second },
+    { hour: utcHour, minute: utcMinute, second: utcSecond },
+  );
 
   return {
     index,
-    localTime: {
-      year, month, day,
-      hour: view.getUint32(OFF.HOUR, true),
-      minute: view.getUint32(OFF.MINUTE, true),
-      second: view.getUint32(OFF.SECOND, true),
-    },
+    localTime: { year, month, day, hour, minute, second },
     utcTime: { hour: utcHour, minute: utcMinute, second: utcSecond },
     timestampMs,
-    latitude: Number(view.getBigInt64(OFF.LATITUDE, true)) / COORD_SCALE,
-    longitude: Number(view.getBigInt64(OFF.LONGITUDE, true)) / COORD_SCALE,
-    speedKph: Number(view.getBigInt64(OFF.SPEED, true)) / 1000,
+    latitude: nmeaToDegrees(Number(view.getBigInt64(OFF.LATITUDE, true))),
+    longitude: nmeaToDegrees(Number(view.getBigInt64(OFF.LONGITUDE, true))),
+    speedKph: Number(view.getBigInt64(OFF.SPEED_KPH, true)) / 1000,
+    speedKnots: Number(view.getBigInt64(OFF.SPEED_KNOTS, true)) / 1000,
     headingDeg: Number(view.getBigInt64(OFF.HEADING, true)) / 100,
     accel: {
       x: view.getInt16(OFF.ACCEL, true),

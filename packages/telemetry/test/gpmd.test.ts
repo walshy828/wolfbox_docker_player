@@ -2,10 +2,10 @@ import { test, describe, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { existsSync } from 'node:fs';
 import { parseTracks } from '../src/mp4.ts';
-import { readTelemetry, findTelemetryTrack } from '../src/gpmd.ts';
+import { readTelemetry, findTelemetryTrack, resolveTimestamp } from '../src/gpmd.ts';
 import { cleanTrack } from '../src/clean.ts';
-import { bearingDeg, haversineMeters } from '../src/geo.ts';
-import { fileReader, REFERENCE_CLIP, REFERENCE_REAR } from './helpers.ts';
+import { bearingDeg, haversineMeters, kphToMph } from '../src/geo.ts';
+import { fileReader, CARD, REFERENCE_CLIP, REFERENCE_REAR } from './helpers.ts';
 
 const available = existsSync(REFERENCE_CLIP);
 const skip = available ? false : `reference card not mounted (${REFERENCE_CLIP})`;
@@ -44,9 +44,11 @@ describe('WolfBox clip parsing', { skip }, () => {
     assert.deepEqual(first.localTime,
       { year: 2026, month: 8, day: 1, hour: 11, minute: 23, second: 29 });
     assert.deepEqual(first.utcTime, { hour: 19, minute: 23, second: 29 });
-    assert.equal(first.latitude, 41.4597594);
-    assert.equal(first.longitude, -70.3532704);
-    assert.equal(first.speedKph, 59.379);
+    // ddmm.mmmmm: 4145.97594 is 41 degrees 45.97594 minutes.
+    assert.equal(first.latitude.toFixed(5), '41.76627');
+    assert.equal(first.longitude.toFixed(5), '-70.58878');
+    assert.equal(first.speedKnots, 59.379);
+    assert.equal(first.speedKph, 109.974);
     assert.equal(first.headingDeg, 36.93);
     assert.deepEqual(first.accel, { x: -180, y: 12, z: 154 });
     assert.equal(first.hasFix, true);
@@ -60,9 +62,10 @@ describe('WolfBox clip parsing', { skip }, () => {
     assert.equal((last.timestampMs - points[0]!.timestampMs) / 1000, 59);
   });
 
-  // This is the check that pins the coordinate scale. Reading the fields as
-  // NMEA ddmm.mmmmm instead of 1e-7 degrees shifts the position ~34km and
-  // breaks this agreement.
+  // Heading agrees with the computed bearing under *either* coordinate reading,
+  // because ddmm.mmmmm scales latitude and longitude deltas equally -- so this
+  // check cannot pin the scale on its own. It is kept because it does catch a
+  // swapped or misaligned coordinate pair.
   test('reported heading agrees with the bearing between fixes', async () => {
     const points = cleanTrack(await readTelemetry(reader));
     const moving = points.filter((p) => p.speedKph > 20);
@@ -77,15 +80,46 @@ describe('WolfBox clip parsing', { skip }, () => {
     }
   });
 
-  test('straight-line distance stays under the speed-integrated path', async () => {
+  // The check that actually pins the coordinate scale. GPS-derived speed and
+  // the reported speed must agree; reading the coordinates as decimal degrees
+  // instead of ddmm.mmmmm shrinks every distance by a factor of ~1.67 and
+  // breaks that agreement.
+  test('GPS-derived speed matches the reported speed', async () => {
     const points = cleanTrack(await readTelemetry(reader));
-    const window = points.slice(0, 21);
-    const straight = haversineMeters(window[0]!, window.at(-1)!);
-    const path = window.slice(0, -1).reduce((m, p) => m + p.speedKph / 3.6, 0);
-    // A ddmm.mmmmm reading gives ~683m here against a ~335m path, which is
-    // geometrically impossible; 1e-7 degrees gives ~368m.
-    assert.ok(straight > 300 && straight < 420, `straight-line was ${straight.toFixed(0)}m`);
-    assert.ok(straight / path < 1.2, `straight/path ratio ${(straight / path).toFixed(2)}`);
+    const moving = points.filter((p) => p.speedKph > 40);
+    assert.ok(moving.length > 20, 'clip has a moving stretch to test against');
+
+    let sumRatio = 0;
+    let samples = 0;
+    for (let i = 1; i < moving.length; i++) {
+      const a = moving[i - 1]!;
+      const b = moving[i]!;
+      const seconds = (b.timestampMs - a.timestampMs) / 1000;
+      if (seconds <= 0 || seconds > 2) continue;
+      const derivedKph = (haversineMeters(a, b) / seconds) * 3.6;
+      sumRatio += derivedKph / a.speedKph;
+      samples++;
+    }
+    const ratio = sumRatio / samples;
+    assert.ok(ratio > 0.9 && ratio < 1.1, `derived/reported speed ratio was ${ratio.toFixed(3)}`);
+  });
+
+  // The camera burns its own reading into the picture, which is independent
+  // ground truth for the whole field table.
+  test('matches the position the camera burned into the video', async () => {
+    const clip = await fileReader(`${CARD}/front_norm/2026_08_04_133634_00.MP4`);
+    try {
+      const points = await readTelemetry(clip);
+      // Overlay at 13:37:07 reads "W71.4938 N42.2969 64.1MPH".
+      const at = points.find((p) => p.localTime.hour === 13 && p.localTime.minute === 37
+        && p.localTime.second === 7)!;
+      assert.ok(at, 'sample for 13:37:07 present');
+      assert.equal(at.latitude.toFixed(4), '42.2969');
+      assert.equal(at.longitude.toFixed(4), '-71.4938');
+      assert.equal(kphToMph(at.speedKph).toFixed(0), '64');
+    } finally {
+      await clip.close();
+    }
   });
 
   test('rear clip carries its own telemetry, at a lower resolution', async () => {
@@ -105,7 +139,7 @@ describe('WolfBox clip parsing', { skip }, () => {
   test('stride reads a sparse subset for cheap previews', async () => {
     const sparse = await readTelemetry(reader, { stride: 60 });
     assert.equal(sparse.length, 1, 'one point per clip');
-    assert.equal(sparse[0]!.latitude, 41.4597594);
+    assert.equal(sparse[0]!.latitude.toFixed(5), '41.76627');
   });
 });
 
@@ -115,7 +149,7 @@ describe('cleanTrack', () => {
     localTime: { year: 2026, month: 8, day: 1, hour: 11, minute: 23, second: 29 },
     utcTime: { hour: 19, minute: 23, second: 29 },
     timestampMs: Date.UTC(2026, 7, 1, 19, 23, 29),
-    latitude: 42.1, longitude: -71.3, speedKph: 50, headingDeg: 90,
+    latitude: 42.1, longitude: -71.3, speedKph: 50, speedKnots: 27, headingDeg: 90,
     accel: { x: 0, y: 0, z: 0 }, hasFix: true,
   };
   const at = (i: number, over: Partial<typeof base> = {}) =>
@@ -141,5 +175,48 @@ describe('cleanTrack', () => {
   test('keeps a genuinely fast but plausible stretch', () => {
     const cleaned = cleanTrack([at(0, { speedKph: 110 }), at(1, { speedKph: 112 })]);
     assert.equal(cleaned.length, 2);
+  });
+});
+
+describe('resolveTimestamp', () => {
+  const utc = (y: number, mo: number, d: number, h: number, mi = 0) => Date.UTC(y, mo - 1, d, h, mi);
+  const local = (y: number, mo: number, d: number, h: number, mi = 0, sec = 0) =>
+    ({ year: y, month: mo, day: d, hour: h, minute: mi, second: sec });
+
+  test('pairs the local date with the UTC time of day', () => {
+    // 11:23:29 local, 19:23:29 UTC -- an eight-hour offset, same date.
+    assert.equal(
+      resolveTimestamp(local(2026, 8, 1, 11, 23, 29), { hour: 19, minute: 23, second: 29 }),
+      Date.UTC(2026, 7, 1, 19, 23, 29),
+    );
+  });
+
+  // Without this the clip lands 24 hours in the past.
+  test('rolls forward when UTC is already the next day', () => {
+    // 20:00 local on 4 Aug in US Eastern is 00:00 UTC on 5 Aug.
+    assert.equal(
+      resolveTimestamp(local(2026, 8, 4, 20), { hour: 0, minute: 0, second: 0 }),
+      utc(2026, 8, 5, 0),
+    );
+  });
+
+  test('rolls back when UTC is still the previous day', () => {
+    // 02:00 local on 1 Jan in Tokyo is 17:00 UTC on 31 Dec.
+    assert.equal(
+      resolveTimestamp(local(2026, 1, 1, 2), { hour: 17, minute: 0, second: 0 }),
+      utc(2025, 12, 31, 17),
+    );
+  });
+
+  test('leaves plausible offsets alone at both extremes', () => {
+    // UTC-11 and UTC+13 are both real zones and must not be shifted.
+    assert.equal(
+      resolveTimestamp(local(2026, 8, 4, 1), { hour: 12, minute: 0, second: 0 }),
+      utc(2026, 8, 4, 12),
+    );
+    assert.equal(
+      resolveTimestamp(local(2026, 8, 4, 13), { hour: 0, minute: 0, second: 0 }),
+      utc(2026, 8, 4, 0),
+    );
   });
 });

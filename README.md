@@ -101,25 +101,38 @@ front and rear files.
 | `0x08` | 3×i16 | accelerometer X, Y, Z (raw counts) |
 | `0x10`/`0x14`/`0x18` | u32 | local hour, minute, second |
 | `0x20` | u64 | GPS fix valid (1 = fix) |
-| `0x48` | i64 | speed, ÷1000 → km/h |
+| `0x48` | i64 | speed over ground, ÷1000 → knots |
 | `0x58` | i64 | heading, ÷100 → degrees true |
 | `0x68`/`0x6c`/`0x70` | u32,u32,u64 | day, month, year |
 | `0xa0`/`0xa4`/`0xa8` | u32 | UTC hour, minute, second |
-| `0xb0` | i64 | latitude, ÷1e7 → decimal degrees |
-| `0xc0` | i64 | longitude, ÷1e7 → decimal degrees |
+| `0xb0` | i64 | latitude, ÷1e5 → `ddmm.mmmmm` |
+| `0xc0` | i64 | longitude, ÷1e5 → `ddmm.mmmmm` |
+| `0x1f8` | i64 | speed, ÷1000 → km/h |
 | `0x98` | — | ASCII `YSKJ`, start of the GNSS diagnostic block |
 
-Each coordinate is followed by a u64 literal `100000` that looks like a scale
-factor. **It is not applied by the firmware** — coordinates are plain 1e-7
-degrees. The i64 fields at `0x28`/`0x38` also look like coordinates but are noise.
+The record is a decoded NMEA RMC sentence and keeps NMEA's units: coordinates
+are **`ddmm.mmmmm`** — degrees and decimal *minutes*, not decimal degrees — and
+speed over ground is in knots, with a converted km/h value at `0x1f8`. The u64
+following each value is its scale factor (100000 for coordinates, 1000 for
+speed) and the firmware really does apply it. The i64 fields at `0x28`/`0x38`
+also look like coordinates but are noise.
 
-This was recovered from a reference card (all 728 clips, 41,881 points) and
-cross-checked three ways: the reported heading matches the bearing computed
-between consecutive fixes to under 0.5°; straight-line distance over 20 s (368 m)
-is consistent with the speed-integrated path (335 m), where reading the
-coordinates as NMEA `ddmm.mmmmm` gives 683 m and is geometrically impossible; and
-decoded positions reverse-geocode to real roads. `packages/telemetry` asserts
-these as golden values.
+Reading the coordinates as decimal degrees is the trap. The raw latitude
+`421781133` is `4217.81133` ddmm, i.e. 42 degrees 17.81133 minutes, i.e.
+**42.29686**. Divide by 1e7 instead and you get a perfectly plausible-looking
+**42.17811** — same state, same general area, roughly 13 km south of where the
+car actually was. Every derived distance then comes out a factor of ~1.67 too
+small, which is small enough to look believable.
+
+The table is anchored to ground truth the camera provides itself: it burns its
+position and speed into the picture. For `front_norm/2026_08_04_133634_00.MP4`
+at 13:37:07 the overlay reads `W71.4938 N42.2969 64.1MPH`, and this table
+decodes that sample to 42.29686, −71.49383, 103.6 km/h (64.4 mph) — which
+reverse-geocodes to Turnpike Road (Route 9) in Southborough, the divided highway
+visible in the frame. GPS-derived speed across the surrounding samples is
+103–105 km/h, agreeing with the reported figure to about 1%.
+`packages/telemetry` asserts all of this, including the overlay sample, as
+golden values.
 
 ### Card layout
 
@@ -139,13 +152,15 @@ Clips are 60 s, named `YYYY_MM_DD_HHMMSS_<cam>[_b].MP4`.
   playback aligns the two videos by their embedded GPS timestamps.
 - **No-fix rows are written as latitude/longitude `0,0`**, which would otherwise
   drag the route line to Null Island.
-- **Speed spikes to 671 km/h** occur during fix loss. Speed statistics use a
+- **Speed spikes** occur during fix loss. Speed statistics use a
   median-smoothed series, because isolated spikes well under any sane outlier
   clamp would otherwise be reported as a trip's top speed.
 - **Parking events are isolated one-minute clips** — 130 of them against 54 real
   drives on the reference card — so they get their own list.
-- **Not every drive is on a road.** The reference card contains a ferry crossing
-  of Nantucket Sound. Nothing snaps to roads.
+- **The local date and the UTC time-of-day disagree near midnight.** An evening
+  drive in the US is already tomorrow in UTC, and the camera never records its
+  offset, so a naive pairing puts the clip 24 hours in the past.
+- **Nothing snaps to roads.** Not every drive is on one.
 
 ## Speed colours
 
