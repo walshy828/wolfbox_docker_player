@@ -56,7 +56,7 @@ describe('summarize', () => {
     const slam = summarize(cleanTrack(run([50, 50, 50, 20, 20])))!;
     const braking = slam.harshEvents.filter((e) => e.kind === 'braking');
     assert.equal(braking.length, 1);
-    assert.ok(braking[0]!.deltaKph < 0);
+    assert.ok(braking[0]!.peakDeltaKph < 0);
   });
 
   // A real trip on the reference card reported a 44 mph maximum but contained

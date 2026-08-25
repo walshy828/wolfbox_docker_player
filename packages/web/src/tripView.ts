@@ -36,3 +36,37 @@ export function selectTrips(
   }
   return ordered;
 }
+
+/**
+ * Adds or removes one trip from the sidebar selection.
+ *
+ * Selections are held as ids rather than trips because a delete rebuilds every
+ * trip object on the card; ids that no longer exist are pruned by the caller.
+ */
+export function toggleSelected(selected: ReadonlySet<string>, id: string): Set<string> {
+  const next = new Set(selected);
+  if (!next.delete(id)) next.add(id);
+  return next;
+}
+
+/**
+ * Shift-click: selects everything between the anchor and the clicked row.
+ *
+ * The range runs over the list as displayed, so it follows the current filter
+ * and sort rather than the underlying card order. An anchor that has scrolled
+ * out of the filtered list degrades to a plain toggle.
+ */
+export function rangeSelected(
+  selected: ReadonlySet<string>,
+  visibleIds: readonly string[],
+  anchorId: string | null,
+  id: string,
+): Set<string> {
+  const from = anchorId === null ? -1 : visibleIds.indexOf(anchorId);
+  const to = visibleIds.indexOf(id);
+  if (from < 0 || to < 0) return toggleSelected(selected, id);
+
+  const next = new Set(selected);
+  for (let i = Math.min(from, to); i <= Math.max(from, to); i++) next.add(visibleIds[i]!);
+  return next;
+}

@@ -3,6 +3,8 @@ import assert from 'node:assert/strict';
 import {
   colorForMph, colorForBand, bandIndexForMph, rampGradient,
   SPEED_BANDS, STOPPED_BAND, TOP_SPEED_MPH, type Theme,
+  colorForExcessMph, colorForExcessBand, excessRampGradient, unknownLimitColor,
+  EXCESS_BANDS, TOP_EXCESS_MPH,
 } from '../src/speedScale.ts';
 
 /** sRGB relative luminance, for the monotonicity check. */
@@ -100,5 +102,71 @@ describe('speed ramp', () => {
     const gradient = rampGradient('light');
     assert.match(gradient, /^linear-gradient\(to right, #/);
     assert.ok(gradient.includes(colorForMph(TOP_SPEED_MPH, 'light')));
+  });
+});
+
+describe('excess ramp', () => {
+  for (const theme of ['light', 'dark'] as Theme[]) {
+    // The same property the speed ramp is held to. A diverging ramp would fail
+    // this, which is why the compliance view is sequential in excess instead.
+    test(`${theme}: lightness falls monotonically as the excess grows`, () => {
+      let previous = Infinity;
+      for (let mph = 1; mph <= TOP_EXCESS_MPH; mph++) {
+        const current = luminance(colorForExcessMph(mph, theme));
+        assert.ok(current <= previous + 1e-6,
+          `luminance rose at +${mph} mph (${current} > ${previous})`);
+        previous = current;
+      }
+    });
+
+    test(`${theme}: the excess ramp spans a wide lightness range`, () => {
+      const small = luminance(colorForExcessMph(1, theme));
+      const large = luminance(colorForExcessMph(TOP_EXCESS_MPH, theme));
+      assert.ok(small / large > 3, `range was only ${(small / large).toFixed(1)}x`);
+    });
+  }
+
+  test('dark excess steps clear 3:1 against the dark surface', () => {
+    for (let mph = 0; mph <= TOP_EXCESS_MPH; mph++) {
+      const ratio = contrast(colorForExcessMph(mph, 'dark'), '#1a1a19');
+      assert.ok(ratio >= 3, `+${mph} mph is only ${ratio.toFixed(2)}:1`);
+    }
+  });
+
+  test('at or under the limit is one flat colour outside the ramp', () => {
+    const compliant = colorForExcessMph(0, 'light');
+    assert.equal(colorForExcessMph(-10, 'light'), compliant);
+    assert.notEqual(colorForExcessMph(3, 'light'), compliant,
+      'being over the limit is visible even inside the tolerance');
+  });
+
+  test('an unknown limit is neutral, never painted as compliant', () => {
+    for (const theme of ['light', 'dark'] as Theme[]) {
+      assert.notEqual(unknownLimitColor(theme), colorForExcessMph(0, theme));
+      const grey = unknownLimitColor(theme);
+      const [r, g, b] = [1, 3, 5].map((i) => parseInt(grey.slice(i, i + 2), 16)) as
+        [number, number, number];
+      assert.ok(Math.max(r, g, b) - Math.min(r, g, b) < 12, 'unknown should read as grey');
+    }
+  });
+
+  test('a non-finite excess falls back to compliant rather than throwing', () => {
+    assert.equal(colorForExcessMph(Number.NaN, 'light'), colorForExcessMph(0, 'light'));
+  });
+
+  test('pins the top colour at and above the threshold', () => {
+    const top = colorForExcessMph(TOP_EXCESS_MPH, 'light');
+    assert.equal(colorForExcessMph(60, 'light'), top);
+  });
+
+  test('every excess band has a distinct key colour', () => {
+    const keys = EXCESS_BANDS.map((band) => colorForExcessBand(band, 'light'));
+    assert.equal(new Set(keys).size, keys.length);
+  });
+
+  test('the compliance legend gradient covers the excess ramp', () => {
+    const gradient = excessRampGradient('light');
+    assert.match(gradient, /^linear-gradient\(to right, #/);
+    assert.ok(gradient.includes(colorForExcessMph(TOP_EXCESS_MPH, 'light')));
   });
 });

@@ -1,5 +1,6 @@
 import type { CleanPoint } from './clean.ts';
 import { haversineMeters, kphToMph } from './geo.ts';
+import { detectHarshEvents, type HarshEvent } from './harshEvents.ts';
 
 /** Below this the vehicle is treated as stopped, absorbing GPS jitter at rest. */
 export const STOPPED_KPH = 3;
@@ -21,8 +22,8 @@ export interface TripSummary {
   bounds?: { north: number; south: number; east: number; west: number };
   /** Time in seconds spent in each bucket of `SPEED_BUCKETS_MPH`. */
   histogramMph: number[];
-  /** Samples whose forward acceleration exceeded the harsh-event threshold. */
-  harshEvents: { timestampMs: number; deltaKph: number; kind: 'braking' | 'acceleration' }[];
+  /** Hard-braking and hard-acceleration events detected over the trip. */
+  harshEvents: HarshEvent[];
 }
 
 /**
@@ -34,17 +35,15 @@ export interface TripSummary {
 export const SPEED_BUCKETS_MPH = [0, 15, 35, 60, 80, Infinity];
 
 /**
- * A speed change of more than this between consecutive 1 Hz samples is a harsh
- * event. 12 km/h in one second is ~0.34g, a firm but not emergency stop.
- */
-export const HARSH_DELTA_KPH = 12;
-
-/**
  * Derives trip metrics from a cleaned track.
  *
- * Distance is integrated from GPS positions rather than the reported speed:
- * the speed field reads consistently ~10% below the GPS-derived value on the
- * reference card, so trusting it would under-report every trip.
+ * Distance is integrated from GPS positions rather than the reported speed,
+ * because positions are what the route is drawn from and the two should not be
+ * able to disagree. The two agree closely in any case: measured over twelve
+ * clips of the reference card, GPS-integrated distance came to 0.994x the
+ * reported-speed integral, and the speed field itself tracks GPS-derived speed
+ * to within 0.6%. (An earlier note here claimed the speed field read ~10% low.
+ * It does not, and comparing it against a speed limit is sound.)
  *
  * Speed statistics use `smoothedSpeedKph`, not the raw reading. The receiver
  * emits isolated spikes that are too low to trip the outlier filter but still
@@ -66,7 +65,6 @@ export function summarize(points: CleanPoint[]): TripSummary | null {
   let movingSamples = 0;
 
   const histogramMph = new Array(SPEED_BUCKETS_MPH.length - 1).fill(0);
-  const harshEvents: TripSummary['harshEvents'] = [];
   let north = -90, south = 90, east = -180, west = 180;
 
   for (const [i, point] of points.entries()) {
@@ -91,17 +89,6 @@ export function summarize(points: CleanPoint[]): TripSummary | null {
     const bucket = SPEED_BUCKETS_MPH.findIndex((upper, b) => b > 0 && mph < upper) - 1;
     if (bucket >= 0) histogramMph[bucket] += seconds;
 
-    if (previous && seconds > 0) {
-      const deltaKph = (speedKph - previous.smoothedSpeedKph) / seconds;
-      if (Math.abs(deltaKph) >= HARSH_DELTA_KPH) {
-        harshEvents.push({
-          timestampMs: point.timestampMs,
-          deltaKph,
-          kind: deltaKph < 0 ? 'braking' : 'acceleration',
-        });
-      }
-    }
-
     north = Math.max(north, point.latitude);
     south = Math.min(south, point.latitude);
     east = Math.max(east, point.longitude);
@@ -123,6 +110,6 @@ export function summarize(points: CleanPoint[]): TripSummary | null {
     end: { latitude: last.latitude, longitude: last.longitude },
     bounds: { north, south, east, west },
     histogramMph,
-    harshEvents,
+    harshEvents: detectHarshEvents(points),
   };
 }

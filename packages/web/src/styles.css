@@ -93,9 +93,68 @@ button.link {
 .empty-state h2 { color: var(--ink); font-size: 20px; }
 
 .layout {
+  --rail-width: 16px;
+  --trips-width: 290px;
+  --map-width: minmax(340px, 32vw);
+  /* An unpinned panel gives its column back to the video and floats over the
+     workspace on hover, so only the rail is left holding a place for it. */
+  --trips-column: var(--trips-width);
+  --map-column: var(--map-width);
   flex: 1; display: grid;
-  grid-template-columns: 290px minmax(420px, 1fr) minmax(340px, 32vw);
+  grid-template-columns: var(--trips-column) minmax(420px, 1fr) var(--map-column);
   min-height: 0; overflow: hidden;
+}
+.layout[data-trips="auto"] { --trips-column: var(--rail-width); }
+.layout[data-map="auto"] { --map-column: var(--rail-width); }
+
+/* --- docked side panels ---------------------------------------------- */
+/* The dock is the grid column; the panel inside it either fills that column
+   (pinned) or floats over the workspace when the pointer finds the rail. */
+.dock { position: relative; display: flex; min-width: 0; min-height: 0; }
+.dock > :not(.dock-rail) { flex: 1; min-width: 0; }
+.dock--left { --float-width: var(--trips-width); }
+.dock--right { --float-width: clamp(340px, 32vw, 520px); }
+
+.dock--auto > :not(.dock-rail) {
+  position: absolute; top: 0; bottom: 0; width: var(--float-width);
+  z-index: 800; box-shadow: 0 0 28px rgb(0 0 0 / 0.3);
+  opacity: 0; pointer-events: none;
+  transition: transform 140ms ease, opacity 140ms ease;
+}
+/* Slid a little past its own edge so no sliver of the panel shows through. */
+.dock--auto.dock--left > :not(.dock-rail) { left: 0; transform: translateX(calc(-100% - 30px)); }
+.dock--auto.dock--right > :not(.dock-rail) { right: 0; transform: translateX(calc(100% + 30px)); }
+/* The panel is a child of the dock even while it floats, so travelling from
+   the rail onto the panel never leaves the hover target. */
+.dock--auto:hover > :not(.dock-rail),
+.dock--auto:focus-within > :not(.dock-rail) {
+  transform: none; opacity: 1; pointer-events: auto;
+}
+/* Full screen outranks the reveal: the panel fills the window whether or not
+   the pointer is anywhere near its rail. */
+.dock--auto.dock--left > .panel--expanded,
+.dock--auto.dock--right > .panel--expanded {
+  position: fixed; inset: 0; width: auto;
+  transform: none; opacity: 1; pointer-events: auto; box-shadow: none;
+}
+
+.dock-rail {
+  flex: none; width: var(--rail-width); padding: 0;
+  border: none; border-radius: 0; background: var(--surface-sunken);
+  display: flex; align-items: center; justify-content: center;
+  color: var(--ink-muted); cursor: pointer;
+}
+.dock--left .dock-rail { border-right: 1px solid var(--border); }
+.dock--right .dock-rail { border-left: 1px solid var(--border); }
+.dock-rail:hover { background: var(--surface-raised); color: var(--ink); }
+.dock-rail-label {
+  writing-mode: vertical-rl; font-size: 11px; letter-spacing: 0.14em;
+  text-transform: uppercase;
+}
+.dock--left .dock-rail-label { rotate: 180deg; }
+
+@media (prefers-reduced-motion: reduce) {
+  .dock--auto > :not(.dock-rail) { transition: none; }
 }
 
 /* Each column owns its own scrolling so one long list cannot push the
@@ -115,6 +174,15 @@ button.link {
 }
 .expand-button:hover { color: var(--ink); }
 
+/* A control that shows its own state, e.g. whether a panel is pinned. */
+.icon-toggle {
+  display: inline-flex; align-items: center; justify-content: center;
+  padding: 5px; line-height: 0; background: none; border-color: transparent;
+  color: var(--ink-muted);
+}
+.icon-toggle:hover:not(:disabled) { color: var(--ink); border-color: var(--border); }
+.icon-toggle.selected { color: var(--accent); }
+
 /* Expanding swaps in fixed positioning rather than moving the node: a <video>
    that is re-parented reloads and loses the playhead, and the map would throw
    away its tiles and view. */
@@ -127,14 +195,14 @@ button.link {
 .sidebar {
   border-right: 1px solid var(--border);
   background: var(--surface-raised);
-  display: grid; grid-template-rows: auto 1fr;
+  display: flex; flex-direction: column;
   min-height: 0; overflow: hidden;
 }
 .sidebar-controls {
   padding: 10px 12px; border-bottom: 1px solid var(--border);
   display: grid; gap: 8px;
 }
-.sidebar-scroll { overflow-y: auto; padding: 8px 12px 16px; min-height: 0; }
+.sidebar-scroll { flex: 1; overflow-y: auto; padding: 8px 12px 16px; min-height: 0; }
 .count { color: var(--ink-muted); font-weight: 400; }
 
 .segmented { display: flex; }
@@ -172,12 +240,49 @@ button.link {
 }
 .trip:hover { background: var(--surface-sunken); }
 .trip.selected { background: var(--surface-sunken); border-color: var(--accent); }
-.trip-when { font-weight: 600; font-size: 14px; }
+.trip-when { font-weight: 600; font-size: 14px; display: inline-flex; align-items: center; gap: 5px; }
+.harsh-badge {
+  display: inline-flex; align-items: center; gap: 2px;
+  font-size: 11px; font-weight: 600;
+}
+.harsh-badge--moderate { color: var(--warn); }
+.harsh-badge--severe { color: var(--danger); }
+.score-badge {
+  display: inline-flex; align-items: center; justify-content: center;
+  min-width: 22px; padding: 1px 5px;
+  font-size: 11px; font-weight: 700; line-height: 1.4;
+  border-radius: 999px; border: 1px solid currentColor;
+}
+.score-badge--good { color: var(--ok); }
+.score-badge--fair { color: var(--warn); }
+.score-badge--poor { color: var(--danger); }
+.adherence-badge {
+  font-size: 11px; font-weight: 600; color: var(--ink-secondary);
+  white-space: nowrap;
+}
 .trip-meta { font-size: 12px; color: var(--ink-muted); display: flex; gap: 6px; align-items: center; }
+.trip-stats {
+  display: block; font-size: 12px; color: var(--ink-secondary); margin-top: 1px;
+}
+.top-speed--severe { color: var(--danger); font-weight: 700; }
+.top-speed--moderate { color: var(--warn); font-weight: 700; }
+.trip-stats--pending { color: var(--ink-muted); font-style: italic; }
+.trip-route {
+  display: block; color: var(--ink-muted);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
 
 .workspace { background: var(--surface); }
-/* The player is a fixed row; only what sits under it scrolls. */
-.workspace > .player { padding: 16px 16px 0; flex: 0 0 auto; }
+/* The player is a capped row that never grows past a share of the viewport;
+   only what sits under it scrolls. Sized (not aspect-ratio'd) the same way
+   as the expanded state below so a wide single-camera view pillarboxes
+   cleanly instead of leaving a gap — aspect-ratio sizing and a max-height
+   cap disagree inside a grid track, since the track sizes to the
+   aspect-ratio height and the cap only clips the video after that. */
+.workspace > .player {
+  padding: 16px 16px 0; flex: 0 1 auto; min-height: 0; max-height: 55vh;
+  display: flex; flex-direction: column;
+}
 .workspace-scroll {
   overflow-y: auto; min-height: 0; flex: 1;
   padding: 16px; display: grid; gap: 16px; align-content: start;
@@ -185,27 +290,110 @@ button.link {
 .pad { padding: 32px; }
 .muted { color: var(--ink-muted); }
 
-.player-grid { display: grid; gap: 8px; grid-template-columns: 1fr 1fr; }
-.player-grid--front, .player-grid--rear { grid-template-columns: 1fr; }
-.pane { margin: 0; display: grid; gap: 4px; }
-.pane video {
-  width: 100%; aspect-ratio: 16 / 9; background: #000;
-  border-radius: var(--radius); border: 1px solid var(--border);
-  max-height: 100%; object-fit: contain;
+.player-stage { position: relative; flex: 1; min-height: 0; display: flex; }
+.player-grid {
+  display: grid; gap: 8px; grid-template-columns: 1fr 1fr;
+  flex: 1; min-height: 0; grid-template-rows: minmax(0, 1fr);
 }
-/* Full screen: let the picture take the height that is going. */
-.panel--expanded .player { flex: 1; min-height: 0; display: flex; flex-direction: column; padding: 16px; }
-.panel--expanded .player-grid { flex: 1; min-height: 0; }
-.panel--expanded .pane { min-height: 0; }
-.panel--expanded .pane video { height: 100%; aspect-ratio: auto; }
+.player-grid--front, .player-grid--rear { grid-template-columns: 1fr; }
+.pane { margin: 0; display: grid; gap: 4px; min-height: 0; grid-template-rows: minmax(0, 1fr) auto; }
+/* Single-camera layouts hide the other pane rather than unmounting it, so the
+   front element keeps driving the clock and the roll into the next clip. */
+.pane--hidden { display: none; }
+.pane video {
+  width: 100%; height: 100%; min-height: 0; background: #000;
+  border-radius: var(--radius); border: 1px solid var(--border);
+  object-fit: contain;
+}
+/* Full screen: let the picture take all the height that is going, and no
+   more — every row from the panel down has to be told it may shrink, or an
+   auto row sizes to the video's intrinsic height and overflows the viewport. */
+.panel--expanded .player { flex: 1; max-height: none; padding: 16px; }
 .panel--expanded .workspace-scroll { display: none; }
 .pane figcaption { font-size: 12px; color: var(--ink-muted); }
 
-.player-controls {
-  display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-top: 12px;
+/*
+ * The click-to-toggle layer sits above the video but below the overlay bar,
+ * so dragging the progress bar or pressing a transport button never also
+ * toggles playback.
+ */
+.player-click-catcher {
+  position: absolute; inset: 0; width: 100%; height: 100%;
+  background: none; border: none; padding: 0; cursor: pointer; z-index: 1;
 }
-.player-rate { font-size: 13px; color: var(--ink-secondary); display: flex; gap: 4px; align-items: center; }
-.player-position { font-size: 13px; color: var(--ink-muted); margin-left: auto; }
+
+/*
+ * The floating YouTube-style transport. Fades in on hover/focus and while
+ * paused; DualPlayer fades it back out a couple of seconds after playback
+ * resumes and the pointer stops moving. It always sits over a black video
+ * regardless of app theme, so its colours are fixed light values rather than
+ * the usual `--ink`/`--surface` tokens.
+ */
+.player-overlay {
+  position: absolute; inset: 0; z-index: 2;
+  display: flex; flex-direction: column; justify-content: flex-end;
+  opacity: 0; pointer-events: none; transition: opacity 200ms ease;
+}
+.player-overlay--visible, .player-overlay:focus-within { opacity: 1; }
+.player-overlay-scrim {
+  position: absolute; inset: 0; pointer-events: none;
+  background: linear-gradient(to top, rgba(0, 0, 0, 0.7), rgba(0, 0, 0, 0) 55%);
+}
+/*
+ * Only the bar itself (not the empty area above it) takes pointer events --
+ * the whole `.player-overlay` box stays click-through, or a click anywhere on
+ * the video that isn't on an actual control would be swallowed by this
+ * transparent wrapper before it ever reached the click-to-toggle layer below.
+ */
+.overlay-bar {
+  position: relative; display: flex; flex-direction: column; gap: 2px; padding: 8px 14px 10px;
+  pointer-events: none;
+}
+.player-overlay--visible .overlay-bar, .player-overlay:focus-within .overlay-bar { pointer-events: auto; }
+.overlay-scrub-range {
+  width: 100%; height: 18px; margin: 0; cursor: pointer;
+  accent-color: #fff; background: none;
+}
+.overlay-scrub-range:disabled { cursor: default; opacity: 0.5; }
+.overlay-scrub-range:focus-visible { outline: 2px solid #fff; outline-offset: 2px; }
+.overlay-buttons {
+  display: flex; align-items: center; gap: 2px; color: #fff;
+  flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none;
+}
+.overlay-buttons::-webkit-scrollbar { display: none; }
+.overlay-icon-button {
+  display: inline-flex; align-items: center; justify-content: center; flex: none;
+  background: none; border: none; color: #fff; padding: 6px; border-radius: var(--radius);
+}
+.overlay-icon-button:hover:not(:disabled) { background: rgba(255, 255, 255, 0.18); }
+.overlay-icon-button:focus-visible { outline: 2px solid #fff; outline-offset: 1px; }
+.overlay-icon-button:disabled { color: rgba(255, 255, 255, 0.35); cursor: default; }
+.overlay-icon-button.selected { background: rgba(255, 255, 255, 0.18); }
+.overlay-icon-button--play { padding: 6px 8px; }
+.overlay-time {
+  font-size: 12px; color: rgba(255, 255, 255, 0.9); margin-left: 8px;
+  font-variant-numeric: tabular-nums; white-space: nowrap;
+}
+.overlay-clip-position {
+  font-size: 12px; color: rgba(255, 255, 255, 0.75); margin-left: auto;
+  white-space: nowrap; padding-right: 4px;
+}
+
+/* Anchors the settings popover to the gear button; the button sits at the
+   far right of the overlay row, so the panel opens upward and to the left. */
+.overlay-settings { position: relative; }
+.overlay-settings-panel {
+  position: absolute; bottom: calc(100% + 8px); right: 0; z-index: 3;
+  display: flex; flex-direction: column; gap: 10px; min-width: 180px;
+  background: rgba(24, 24, 24, 0.95); border: 1px solid rgba(255, 255, 255, 0.15);
+  border-radius: var(--radius); padding: 10px 12px; box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4);
+  color: #fff; font-size: 13px;
+}
+.overlay-settings-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.overlay-settings-row select {
+  background: rgba(255, 255, 255, 0.1); color: #fff; border: 1px solid rgba(255, 255, 255, 0.25);
+}
+
 .player-status { font-size: 13px; color: var(--ink-secondary); margin: 8px 0 0; }
 .player-status--error { color: var(--danger); }
 .player-empty { padding: 32px; color: var(--ink-muted); }
@@ -214,13 +402,68 @@ button.link {
 .chip { border-radius: 999px; font-size: 13px; padding: 4px 12px; }
 .chip.selected { background: var(--accent); color: var(--accent-ink); border-color: transparent; }
 
+/* --- folding panels --------------------------------------------------- */
+.fold > summary {
+  display: flex; align-items: center; gap: 6px; cursor: pointer;
+  font-size: 13px; font-weight: 600; color: var(--ink-secondary);
+  padding: 4px 2px; border-radius: var(--radius); list-style: none;
+  user-select: none;
+}
+/* Safari draws its own triangle in the summary's marker box. */
+.fold > summary::-webkit-details-marker { display: none; }
+.fold > summary:hover { color: var(--ink); }
+.fold > summary:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.fold-arrow { flex: none; transition: transform 0.15s ease; color: var(--ink-muted); }
+.fold[open] > summary .fold-arrow { transform: rotate(90deg); }
+.fold-body { padding-top: 8px; }
+
+@media (prefers-reduced-motion: reduce) {
+  .fold-arrow { transition: none; }
+  .player-overlay { transition: none; }
+}
+
 /* --- summary --------------------------------------------------------- */
-.summary { display: grid; gap: 14px; }
+.summary .fold-body { display: grid; gap: 14px; }
+
+.score-hero { display: flex; align-items: center; gap: 16px; }
+.score-gauge-track { fill: none; stroke: var(--surface-sunken); stroke-width: 8; }
+.score-gauge-value { fill: none; stroke-width: 8; stroke-linecap: round; transition: stroke-dashoffset 0.4s ease; }
+.score-gauge--good .score-gauge-value { stroke: var(--ok); }
+.score-gauge--fair .score-gauge-value { stroke: var(--warn); }
+.score-gauge--poor .score-gauge-value { stroke: var(--danger); }
+.score-gauge-number { font-size: 26px; font-weight: 700; fill: var(--ink); font-variant-numeric: tabular-nums; }
+.score-gauge-suffix { font-size: 11px; fill: var(--ink-muted); }
+.score-hero-text { display: grid; gap: 4px; }
+.score-hero-band { font-size: 16px; }
+.score-hero-band--good { color: var(--ok); }
+.score-hero-band--fair { color: var(--warn); }
+.score-hero-band--poor { color: var(--danger); }
+
+.issue-grid {
+  display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: 8px;
+}
+.issue-grid--harsh { grid-template-columns: repeat(auto-fit, minmax(100px, 1fr)); }
+.issue-tile {
+  display: grid; gap: 2px; padding: 8px 10px; border-radius: 8px;
+  background: var(--surface-sunken); border: 1px solid var(--border);
+}
+.issue-tile-value { font-size: 20px; font-weight: 700; font-variant-numeric: tabular-nums; }
+.issue-tile-label { font-size: 11px; color: var(--ink-secondary); text-transform: uppercase; letter-spacing: 0.04em; }
+.issue-tile-detail { font-size: 11px; color: var(--ink-muted); }
+.issue-tile--ok { border-color: color-mix(in srgb, var(--ok) 40%, var(--border)); }
+.issue-tile--ok .issue-tile-value { color: var(--ok); }
+.issue-tile--warn { border-color: color-mix(in srgb, var(--warn) 40%, var(--border)); }
+.issue-tile--warn .issue-tile-value { color: var(--warn); }
+.issue-tile--danger { border-color: color-mix(in srgb, var(--danger) 40%, var(--border)); }
+.issue-tile--danger .issue-tile-value { color: var(--danger); }
+.issue-tile--muted .issue-tile-value { color: var(--ink-muted); }
+
 .stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(110px, 1fr)); gap: 12px; margin: 0; }
 .stats div { display: grid; gap: 2px; }
 .stats dt { font-size: 12px; color: var(--ink-muted); text-transform: uppercase; letter-spacing: 0.05em; }
 .stats dd { margin: 0; font-size: 24px; font-weight: 600; font-variant-numeric: tabular-nums; }
 .stats dd small { font-size: 13px; font-weight: 400; color: var(--ink-muted); }
+.peak-severe { color: var(--danger); }
 
 .chart-head { display: flex; align-items: baseline; gap: 8px; }
 .chart-head h3 { font-size: 13px; margin: 0; color: var(--ink-secondary); }
@@ -242,22 +485,50 @@ button.link {
 /* --- map ------------------------------------------------------------- */
 .map-column {
   border-left: 1px solid var(--border);
-  display: grid; grid-template-rows: auto minmax(0, 1fr) auto;
+  display: grid; grid-template-rows: auto minmax(0, 1fr) auto auto;
   min-height: 0; background: var(--surface-raised);
 }
+.map-scroll {
+  overflow-y: auto; min-height: 0; max-height: 45vh;
+  padding: 16px; display: grid; gap: 16px; align-content: start;
+  border-top: 1px solid var(--border);
+}
 .readout-main { display: flex; align-items: center; gap: 8px; }
-.readout { padding: 12px 16px; display: grid; gap: 2px; border-bottom: 1px solid var(--border); }
+.readout-speed-block { display: grid; gap: 1px; line-height: 1; }
 .readout-speed { font-size: 34px; font-weight: 650; font-variant-numeric: tabular-nums; line-height: 1; }
 .readout-speed small { font-size: 14px; font-weight: 400; color: var(--ink-muted); margin-left: 4px; }
-.readout-position { font-size: 12px; color: var(--ink-muted); font-variant-numeric: tabular-nums; }
-
-.legend { padding: 10px 16px 12px; border-top: 1px solid var(--border); }
-.legend h3 {
-  font-size: 12px; text-transform: uppercase; letter-spacing: 0.06em;
-  color: var(--ink-muted); margin: 0 0 8px;
+/* Tints the number itself once the sustained excess over the road's limit is
+   enough to count as a stretch -- same colours as the stretch/harsh-event badges. */
+.readout-speed--moderate { color: var(--warn); }
+.readout-speed--severe { color: var(--danger); }
+/* Right below the speed: the limit of the road the car is currently on. */
+.readout-limit { font-size: 11px; color: var(--ink-muted); white-space: nowrap; }
+/* Sits beside the speed: the moment those numbers describe. */
+.readout-when { display: grid; gap: 1px; line-height: 1.15; margin-left: 4px; }
+.readout-clock { font-size: 17px; font-weight: 600; font-variant-numeric: tabular-nums; }
+.readout-date { font-size: 11px; color: var(--ink-muted); }
+/* The GPS coordinates, tucked into the map panel head next to its title. */
+.readout-position {
+  font-size: 11px; color: var(--ink-muted); font-variant-numeric: tabular-nums;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
 
-.legend-ramp { margin-bottom: 10px; }
+/* Live braking/accel and lateral force, beside the speed readout: a bullseye, dot deflecting toward the combined g-vector. */
+.gforce-meter { flex-shrink: 0; margin-left: 10px; overflow: visible; }
+.gforce-ring { fill: none; stroke: var(--border); stroke-width: 1; }
+.gforce-axis { stroke: var(--border); stroke-width: 1; }
+/* Lateral is not independently validated (see accel.ts) -- dashed so it doesn't read with the same confidence as the braking/accel axis. */
+.gforce-axis--lateral { stroke-dasharray: 2 2; }
+.gforce-tick { font-size: 6px; fill: var(--ink-muted); }
+.gforce-dot { stroke: var(--surface); stroke-width: 1.5; }
+
+/* The ramp and its mode toggle: always visible, right under the map. */
+.legend { padding: 10px 16px 12px; border-top: 1px solid var(--border); display: grid; gap: 8px; }
+.legend-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.legend-head h3 {
+  margin: 0; flex: 1 1 auto;
+  font-size: 12px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--ink-muted);
+}
 .legend-bar { height: 12px; border-radius: 3px; border: 1px solid var(--border); }
 .legend-ticks { position: relative; height: 14px; }
 .legend-tick {
@@ -278,12 +549,87 @@ button.link {
 @media (max-width: 1100px) {
   .app { height: auto; min-height: 100vh; overflow: visible; }
   .layout { grid-template-columns: 1fr; overflow: visible; }
+  /* One column stacked down the page: there is no edge to hover, and a panel
+     floating over a scrolling page has nothing to float over. */
+  .dock-rail { display: none; }
+  .dock--auto > :not(.dock-rail) {
+    position: static; width: auto; transform: none; opacity: 1;
+    pointer-events: auto; box-shadow: none;
+  }
   .sidebar, .map-column { border: none; border-bottom: 1px solid var(--border); }
-  .sidebar { grid-template-rows: auto auto; }
   .sidebar-scroll { max-height: 40vh; }
-  .map-column { grid-template-rows: auto 360px auto; }
+  .map-column { grid-template-rows: auto 360px auto auto; }
+  .map-scroll { max-height: 60vh; }
   .workspace-scroll { overflow: visible; }
 }
+
+/* --- deleting -------------------------------------------------------- */
+button.danger {
+  color: var(--danger); border-color: currentColor; background: var(--surface-raised);
+  font-weight: 600;
+}
+button.danger:hover:not(:disabled) { background: var(--danger); color: var(--accent-ink); border-color: transparent; }
+
+.icon-button {
+  background: none; border: none; padding: 4px; border-radius: var(--radius);
+  color: var(--ink-muted); display: grid; place-items: center;
+}
+.icon-button:hover:not(:disabled) { color: var(--danger); background: var(--surface-sunken); }
+
+.confirm-inline {
+  display: flex; align-items: center; gap: 6px; flex-wrap: wrap;
+  padding: 6px 8px; border: 1px solid var(--danger); border-radius: var(--radius);
+  background: var(--surface-raised);
+}
+.confirm-inline button { padding: 3px 10px; font-size: 13px; }
+.confirm-question { font-size: 13px; color: var(--ink-secondary); flex: 1; min-width: 12ch; }
+
+.selection-bar {
+  display: flex; align-items: center; gap: 6px; font-size: 13px;
+  padding: 8px 12px; border-bottom: 1px solid var(--border);
+  background: var(--surface-sunken);
+}
+.selection-bar > button { padding: 3px 10px; font-size: 13px; }
+
+/* The row is a flex container so the tick box and the trash can sit outside
+   the trip button -- a checkbox cannot live inside a <button>. */
+.trip-row { display: flex; align-items: center; gap: 6px; }
+.trip-row .trip { flex: 1; min-width: 0; }
+.trip-check { flex: none; margin: 0 2px; accent-color: var(--accent); }
+.trip-delete { flex: none; opacity: 0; }
+.trip-row:hover .trip-delete, .trip-delete:focus-visible { opacity: 1; }
+
+.clip-strip ol {
+  list-style: none; margin: 0; padding: 0; display: grid; gap: 6px;
+  /* Sized to the widest a chip's label gets -- "12:31:21 AM" plus its ordinal
+     -- so the time never wraps and the columns stay even across the row. */
+  grid-template-columns: repeat(auto-fill, minmax(11rem, 1fr));
+}
+/* The trash can is layered over the chip rather than beside it: at this size a
+   second column would squeeze the time onto two lines, and the row of chips
+   reads as a strip of times, not a row of buttons. */
+.clip-chip { position: relative; display: flex; }
+.clip-chip > button {
+  flex: 1; min-width: 0; display: grid; gap: 2px; text-align: left;
+  grid-template-columns: auto 1fr; align-items: baseline;
+  padding: 6px 30px 6px 8px; font-size: 13px;
+}
+.clip-chip.current > button { border-color: var(--accent); background: var(--surface-sunken); }
+.clip-index {
+  grid-row: span 2; font-size: 11px; color: var(--ink-muted);
+  font-variant-numeric: tabular-nums; min-width: 2ch;
+}
+.clip-when { font-variant-numeric: tabular-nums; font-weight: 600; white-space: nowrap; }
+.clip-meta { font-size: 12px; color: var(--ink-muted); display: flex; gap: 6px; align-items: center; }
+.clip-chip .icon-button { position: absolute; top: 3px; right: 3px; opacity: 0; }
+.clip-chip:hover .icon-button, .clip-chip .icon-button:focus-visible { opacity: 1; }
+/* Nothing hovers on a touch screen, so there the trash can always shows. */
+@media (hover: none) {
+  .clip-chip .icon-button { opacity: 1; }
+}
+/* The confirmation is wider than a chip; let it take the whole row rather than
+   blowing out every column to fit it. */
+.clip-strip li:has(.confirm-inline) { grid-column: 1 / -1; }
 
 /* --- vehicle marker --------------------------------------------------- */
 .route-map-wrap { position: relative; min-height: 0; }
@@ -317,4 +663,89 @@ button.link {
 
 @media (prefers-reduced-motion: reduce) {
   .vehicle-marker, .vehicle-marker svg { transition: none; }
+}
+
+/* Pinpoints an event/stretch selected from the Safety or Adherence panel. */
+.highlight-marker { background: none; border: none; }
+.highlight-marker-dot {
+  position: absolute; inset: 9px; border-radius: 50%;
+  box-shadow: 0 0 0 2px #ffffff;
+}
+.highlight-marker-ring {
+  position: absolute; inset: 0; border-radius: 50%; border-width: 2px; border-style: solid;
+  animation: highlight-pulse 1.6s ease-out infinite;
+}
+@keyframes highlight-pulse {
+  0% { transform: scale(0.4); opacity: 0.9; }
+  100% { transform: scale(1); opacity: 0; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .highlight-marker-ring { animation: none; opacity: 0.6; }
+}
+
+/* --- Speed limit adherence ------------------------------------------- */
+
+.badge--danger { color: var(--danger); }
+
+/*
+ * The coverage line sits directly under the numbers it qualifies rather than
+ * behind a tooltip. An adherence figure without its denominator is the way
+ * this feature would most easily mislead, so the two are never separated.
+ */
+.coverage {
+  margin: 10px 0 0;
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--ink-muted);
+}
+.coverage strong { color: var(--ink); font-weight: 600; }
+
+.stretches {
+  list-style: none;
+  margin: 12px 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.stretch {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  flex-wrap: wrap;
+  padding: 6px 8px;
+  border-radius: var(--radius);
+  font-size: 13px;
+}
+.stretch:nth-child(odd) { background: var(--surface-sunken); }
+.stretch.selected {
+  background: var(--surface-sunken);
+  outline: 1px solid var(--accent);
+  outline-offset: -1px;
+}
+
+/* The timestamp is the control, because jumping to the footage is the point. */
+.stretch-seek {
+  flex: none;
+  font-variant-numeric: tabular-nums;
+  min-width: 62px;
+  text-align: left;
+}
+
+.stretch-what { flex: 1 1 auto; min-width: 0; }
+.stretch-for { flex: none; font-variant-numeric: tabular-nums; }
+
+.legend-modes { display: flex; gap: 4px; }
+.legend-modes .chip { padding: 2px 8px; font-size: 11px; }
+
+/*
+ * The unknown-limit key is hatched, matching the dashed line on the map. The
+ * map uses a non-colour channel for "no data" so it cannot read as compliant,
+ * and the legend has to carry the same distinction to be any use.
+ */
+.legend-swatch--unknown {
+  background-image: repeating-linear-gradient(
+    45deg, transparent 0 2px, rgba(255, 255, 255, 0.55) 2px 4px
+  );
 }

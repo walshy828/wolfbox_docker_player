@@ -59,6 +59,13 @@ describe('vehicleAt', () => {
     assert.equal(Math.round(vehicleAt(accelerating, T0 + 500)!.speedMph), 50);
   });
 
+  // The readout quotes this instant, so a snapped marker must not claim the
+  // cursor's time when it is really showing a sample from a moment away.
+  test('reports the instant it is describing', () => {
+    assert.equal(vehicleAt(track, T0 + 1500)!.timestampMs, T0 + 1500);
+    assert.equal(vehicleAt([point(0)], T0 + 2000)!.timestampMs, T0);
+  });
+
   test('hides the marker outside the track', () => {
     assert.equal(vehicleAt(track, T0 - 60_000), undefined);
     assert.equal(vehicleAt(track, T0 + 60_000), undefined);

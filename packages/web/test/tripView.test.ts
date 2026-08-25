@@ -1,6 +1,6 @@
 import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
-import { selectTrips } from '../src/tripView.ts';
+import { rangeSelected, selectTrips, toggleSelected } from '../src/tripView.ts';
 import type { CardTrip } from '../src/card.ts';
 
 const MINUTE = 60_000;
@@ -53,5 +53,33 @@ describe('selectTrips', () => {
     const original = [...drives];
     selectTrips(drives, events, 'drives', 'oldest');
     assert.deepEqual(drives, original);
+  });
+});
+
+describe('toggleSelected', () => {
+  test('adds then removes, leaving the original untouched', () => {
+    const empty = new Set<string>();
+    const one = toggleSelected(empty, 'morning');
+    assert.deepEqual([...one], ['morning']);
+    assert.deepEqual([...empty], []);
+    assert.deepEqual([...toggleSelected(one, 'morning')], []);
+  });
+});
+
+describe('rangeSelected', () => {
+  const visible = ['a', 'b', 'c', 'd'];
+
+  test('fills in from the anchor to the clicked row', () => {
+    assert.deepEqual([...rangeSelected(new Set(), visible, 'b', 'd')], ['b', 'c', 'd']);
+  });
+
+  test('works backwards, and keeps what was already selected', () => {
+    const selected = new Set(['a']);
+    assert.deepEqual([...rangeSelected(selected, visible, 'd', 'c')].sort(), ['a', 'c', 'd']);
+  });
+
+  test('falls back to a plain toggle with no anchor, or one that is filtered out', () => {
+    assert.deepEqual([...rangeSelected(new Set(), visible, null, 'c')], ['c']);
+    assert.deepEqual([...rangeSelected(new Set(), visible, 'gone', 'c')], ['c']);
   });
 });

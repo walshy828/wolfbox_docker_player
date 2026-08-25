@@ -2,6 +2,7 @@ import {
   parseClipName, buildTrips, CLIP_FOLDERS, blobReader, readTelemetry, clipStartMs,
   type ClipRef, type Trip,
 } from '@wolfbox/telemetry';
+import { clipKey } from './deletion.ts';
 
 /** A clip on a card the user has granted access to. */
 export type CardClip = ClipRef<FileSystemFileHandle>;
@@ -9,6 +10,8 @@ export type CardTrip = Trip<FileSystemFileHandle>;
 
 export interface Card {
   name: string;
+  /** Kept so clips can be reached again -- deleting one needs its folder. */
+  root: FileSystemDirectoryHandle;
   clips: CardClip[];
   trips: CardTrip[];
   /**
@@ -76,10 +79,24 @@ export async function readCard(root: FileSystemDirectoryHandle): Promise<Card> {
 
   return {
     name: root.name,
+    root,
     clips,
     trips: buildTrips(clips),
     cameraUtcOffsetMs: await detectCameraOffset(clips),
   };
+}
+
+/**
+ * Asks for write access to the card, if it is not already granted.
+ *
+ * The picker deliberately opens read-only, so browsing a card can never put the
+ * footage at risk. Write access is raised only when the user confirms a delete,
+ * which is the user gesture `requestPermission` requires.
+ */
+export async function ensureWritable(root: FileSystemDirectoryHandle): Promise<boolean> {
+  const descriptor = { mode: 'readwrite' } as const;
+  if (await root.queryPermission(descriptor) === 'granted') return true;
+  return await root.requestPermission(descriptor) === 'granted';
 }
 
 /** Clips to try before giving up on learning the camera's clock offset. */
@@ -113,6 +130,18 @@ async function detectCameraOffset(clips: CardClip[]): Promise<number | undefined
 }
 
 /**
+ * The card as it stands once the named clips are gone.
+ *
+ * Trips are regrouped from scratch rather than patched, because removing a clip
+ * can change a trip's identity: `Trip.id` comes from its first clip, and a gap
+ * opened in the middle of one splits it in two.
+ */
+export function removeClipsFromCard(card: Card, removedKeys: Set<string>): Card {
+  const clips = card.clips.filter((clip) => !removedKeys.has(clipKey(clip)));
+  return { ...card, clips, trips: buildTrips(clips) };
+}
+
+/**
  * Splits trips into drives and standalone parking events.
  *
  * Parking-mode impacts are written as isolated one-minute clips, so treating
@@ -123,8 +152,11 @@ export function partitionTrips(trips: CardTrip[]): { drives: CardTrip[]; events:
   const drives: CardTrip[] = [];
   const events: CardTrip[] = [];
   for (const trip of trips) {
-    if (trip.hasEvent && trip.clips.length <= 2) events.push(trip);
+    if (isParkingEvent(trip)) events.push(trip);
     else drives.push(trip);
   }
   return { drives, events };
 }
+
+/** True for the isolated one-minute impacts, as opposed to a real drive. */
+export const isParkingEvent = (trip: CardTrip) => trip.hasEvent && trip.clips.length <= 2;

@@ -36,6 +36,21 @@ const FOLDERS: Record<string, { camera: Camera; kind: ClipKind }> = {
 
 export const CLIP_FOLDERS = Object.keys(FOLDERS);
 
+/**
+ * The folder a clip lives in, from what a `ClipRef` records.
+ *
+ * A `ClipRef` keeps camera and kind rather than the folder it was found in,
+ * which is enough to display it but not to reach the file again -- removing one
+ * needs its parent directory. This is the inverse of `FOLDERS`.
+ */
+export function clipFolder(camera: Camera, kind: ClipKind): string {
+  const folder = CLIP_FOLDERS.find(
+    (name) => FOLDERS[name]!.camera === camera && FOLDERS[name]!.kind === kind,
+  );
+  if (!folder) throw new Error(`no folder holds ${camera} ${kind} clips`);
+  return folder;
+}
+
 /** `2026_08_01_112328_00.MP4` (front) / `2026_08_01_112328_01_b.MP4` (rear). */
 const NAME_RE = /^(\d{4})_(\d{2})_(\d{2})_(\d{2})(\d{2})(\d{2})_(\d{2})(_b)?\.MP4$/i;
 

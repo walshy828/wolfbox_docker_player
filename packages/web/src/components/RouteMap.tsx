@@ -1,9 +1,12 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
-import { kphToMph, type CleanPoint } from '@wolfbox/telemetry';
-import { colorForMph, type Theme } from '../speedScale.ts';
+import { kphToMph, type CleanPoint, type HarshEvent } from '@wolfbox/telemetry';
+import {
+  colorForMph, colorForExcessMph, unknownLimitColor, type Theme,
+} from '../speedScale.ts';
 import { vehicleAt } from '../vehicle.ts';
+import { seekTargetMs } from '../safety.ts';
 
 interface Props {
   points: CleanPoint[];
@@ -11,9 +14,35 @@ interface Props {
   cursorMs: number | null;
   theme: Theme;
   onSeek: (timestampMs: number) => void;
+  /** What the line paints: the speed driven, or how far over the limit it was. */
+  mode?: 'speed' | 'excess';
+  /**
+   * Excess over the limit per sample, aligned with `points`. Undefined entries
+   * are stretches where no limit is known, drawn dashed and neutral so they
+   * cannot be mistaken for compliant driving.
+   */
+  excessMph?: (number | undefined)[];
+  /** Hard-braking/acceleration events, marked on the route at their peak moment. */
+  events?: HarshEvent[];
+  /**
+   * The event or stretch currently selected in the Safety/Adherence panel, so
+   * its stretch of road can be picked out and brought into view. `null`/`undefined`
+   * clears it.
+   */
+  highlight?: { startMs: number; endMs: number } | null;
   /** Re-frames the whole route. Offered whenever the user has panned away. */
   onRefit?: () => void;
 }
+
+const EVENT_MARKER_COLOR: Record<HarshEvent['severity'], string> = {
+  moderate: '#c47a1f',
+  severe: '#c0392b',
+};
+
+/** Matches the `--accent` custom property in styles.css for each theme. */
+const HIGHLIGHT_COLOR: Record<Theme, string> = { light: '#1f5fbf', dark: '#7fb0ff' };
+/** Widens a highlighted event/stretch so a near-instant one still reads as a stretch of road. */
+const HIGHLIGHT_PAD_MS = 3_000;
 
 /** A pause longer than this is a recording gap, not a straight line to draw. */
 const GAP_MS = 10_000;
@@ -50,6 +79,18 @@ function vehicleIcon(color: string): L.DivIcon {
   });
 }
 
+/** A pulsing ring pinning down a highlighted event/stretch's location. */
+function highlightIcon(color: string): L.DivIcon {
+  return L.divIcon({
+    className: 'highlight-marker',
+    iconSize: [28, 28],
+    iconAnchor: [14, 14],
+    html: `
+      <span class="highlight-marker-ring" style="border-color:${color}"></span>
+      <span class="highlight-marker-dot" style="background:${color}"></span>`,
+  });
+}
+
 /**
  * Draws the route with each one-second segment coloured by the speed driven
  * over it, and a vehicle marker tracking playback.
@@ -60,10 +101,13 @@ function vehicleIcon(color: string): L.DivIcon {
  * belonging to a map that had already been removed, which renders tiles and
  * controls but no route.
  */
-export function RouteMap({ points, cursorMs, theme, onSeek }: Props) {
+export function RouteMap({
+  points, cursorMs, theme, onSeek, mode = 'speed', excessMph, events, highlight,
+}: Props) {
   const container = useRef<HTMLDivElement>(null);
   const [map, setMap] = useState<L.Map | null>(null);
   const [route, setRoute] = useState<L.LayerGroup | null>(null);
+  const [highlightLayer, setHighlightLayer] = useState<L.LayerGroup | null>(null);
   const [following, setFollowing] = useState(true);
   const vehicle = useRef<L.Marker | null>(null);
   const lastIconColor = useRef<string | null>(null);
@@ -98,6 +142,9 @@ export function RouteMap({ points, cursorMs, theme, onSeek }: Props) {
       attribution: '&copy; OpenStreetMap contributors',
       maxZoom: 19,
     }).addTo(instance);
+    // Added before the route layer so its coloured line renders on top of the
+    // highlight, which then reads as a halo around it rather than covering it.
+    const highlights = L.layerGroup().addTo(instance);
     const layer = L.layerGroup().addTo(instance);
 
     // Leaflet caches the container size at construction. In a grid/flex layout
@@ -116,12 +163,14 @@ export function RouteMap({ points, cursorMs, theme, onSeek }: Props) {
 
     setMap(instance);
     setRoute(layer);
+    setHighlightLayer(highlights);
     return () => {
       resize.disconnect();
       instance.off('dragstart', onDragStart);
       instance.remove();
       setMap(null);
       setRoute(null);
+      setHighlightLayer(null);
       vehicle.current = null;
       fitted.current = null;
     };
@@ -132,26 +181,40 @@ export function RouteMap({ points, cursorMs, theme, onSeek }: Props) {
     if (!map || !route) return;
     route.clearLayers();
 
-    const track = points.filter(usable);
+    // The excess series is aligned with the unfiltered points, so keep each
+    // sample's original index alongside it rather than re-deriving one.
+    const track = points.map((point, index) => ({ point, index })).filter((p) => usable(p.point));
     if (track.length === 0) { fitted.current = null; return; }
+
+    const comparing = mode === 'excess' && excessMph !== undefined;
 
     for (let i = 1; i < track.length; i++) {
       const from = track[i - 1]!;
       const to = track[i]!;
-      if (to.timestampMs - from.timestampMs > GAP_MS) continue;
+      if (to.point.timestampMs - from.point.timestampMs > GAP_MS) continue;
+
+      const excess = comparing ? excessMph[from.index] : undefined;
+      // An unknown limit gets a dashed neutral line. Colour alone would leave
+      // "we don't know" looking like "nothing wrong here", which is the one
+      // reading the data does not support.
+      const unknown = comparing && excess === undefined;
+
       L.polyline(
-        [[from.latitude, from.longitude], [to.latitude, to.longitude]],
+        [[from.point.latitude, from.point.longitude], [to.point.latitude, to.point.longitude]],
         {
-          color: colorForMph(kphToMph(from.smoothedSpeedKph), theme),
+          color: unknown ? unknownLimitColor(theme)
+            : comparing ? colorForExcessMph(excess!, theme)
+            : colorForMph(kphToMph(from.point.smoothedSpeedKph), theme),
           weight: 5,
-          opacity: 0.95,
+          opacity: unknown ? 0.7 : 0.95,
           lineCap: 'round',
+          ...(unknown ? { dashArray: '4 6' } : {}),
         },
       ).addTo(route);
     }
 
-    const start = track[0]!;
-    const end = track.at(-1)!;
+    const start = track[0]!.point;
+    const end = track.at(-1)!.point;
     L.circleMarker([start.latitude, start.longitude], {
       radius: 6, color: '#ffffff', weight: 2, fillColor: '#111111', fillOpacity: 1,
     }).bindTooltip('Start').addTo(route);
@@ -159,18 +222,86 @@ export function RouteMap({ points, cursorMs, theme, onSeek }: Props) {
       radius: 6, color: '#111111', weight: 2, fillColor: '#ffffff', fillOpacity: 1,
     }).bindTooltip('End').addTo(route);
 
+    for (const event of events ?? []) {
+      const at = vehicleAt(points, event.peakAtMs);
+      if (!at) continue;
+      L.circleMarker([at.latitude, at.longitude], {
+        radius: 5, color: '#ffffff', weight: 1.5,
+        fillColor: EVENT_MARKER_COLOR[event.severity], fillOpacity: 0.95,
+      })
+        .bindTooltip(event.kind === 'braking' ? 'Hard braking' : 'Hard acceleration')
+        .on('click', (e) => {
+          L.DomEvent.stopPropagation(e);
+          onSeek(seekTargetMs(event, track[0]!.point.timestampMs));
+        })
+        .addTo(route);
+    }
+
     // Frame the new trip, and resume following it.
     const key = `${start.timestampMs}:${track.length}`;
     if (fitted.current !== key) {
       fitted.current = key;
-      pendingFit.current = L.latLngBounds(track.map((p) => [p.latitude, p.longitude]));
+      pendingFit.current = L.latLngBounds(track.map((p) => [p.point.latitude, p.point.longitude]));
       followArmed.current = false;
       fitCursor.current = cursorMs;
       setFollowing(true);
       map.invalidateSize();
       applyPendingFit(map);
     }
-  }, [map, route, points, theme]);
+  }, [map, route, points, theme, mode, excessMph, events, onSeek]);
+
+  // Picks out the event/stretch selected in the Safety or Adherence panel and
+  // brings it into view, independently of the route redraw above so toggling
+  // it never has to rebuild the whole coloured line.
+  useEffect(() => {
+    if (!map || !highlightLayer) return;
+    highlightLayer.clearLayers();
+    if (!highlight) return;
+
+    const from = highlight.startMs - HIGHLIGHT_PAD_MS;
+    const to = highlight.endMs + HIGHLIGHT_PAD_MS;
+    const segment = points.filter((p) => usable(p) && p.timestampMs >= from && p.timestampMs <= to);
+    const color = HIGHLIGHT_COLOR[theme];
+
+    // Broken into runs at the same recording gaps the route line itself skips,
+    // so a highlight never draws a straight line across a dropped fix.
+    const runs: CleanPoint[][] = [];
+    let current: CleanPoint[] = [];
+    for (const point of segment) {
+      if (current.length > 0 && point.timestampMs - current.at(-1)!.timestampMs > GAP_MS) {
+        runs.push(current);
+        current = [];
+      }
+      current.push(point);
+    }
+    if (current.length > 0) runs.push(current);
+
+    for (const run of runs) {
+      if (run.length < 2) continue;
+      L.polyline(run.map((p) => [p.latitude, p.longitude]), {
+        color, weight: 12, opacity: 0.35, lineCap: 'round',
+      }).addTo(highlightLayer);
+    }
+
+    const anchor = vehicleAt(points, (highlight.startMs + highlight.endMs) / 2) ?? segment[0];
+    const bounds = segment.length > 0
+      ? L.latLngBounds(segment.map((p) => [p.latitude, p.longitude]))
+      : anchor
+        ? L.latLngBounds([[anchor.latitude, anchor.longitude], [anchor.latitude, anchor.longitude]])
+        : null;
+    if (anchor) {
+      L.marker([anchor.latitude, anchor.longitude], {
+        icon: highlightIcon(color), interactive: false, zIndexOffset: 900,
+      }).addTo(highlightLayer);
+    }
+
+    if (bounds?.isValid()) {
+      selfPanning.current = true;
+      setFollowing(false);
+      map.flyToBounds(bounds, { padding: [70, 70], maxZoom: 17, duration: 0.6 });
+      map.once('moveend', () => { selfPanning.current = false; });
+    }
+  }, [map, highlightLayer, highlight, points, theme]);
 
   /**
    * Fits the outstanding route, if the map is big enough to be fitted to.

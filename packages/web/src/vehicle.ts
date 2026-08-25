@@ -6,6 +6,12 @@ export interface VehicleState {
   /** Degrees true, interpolated the short way round. */
   headingDeg: number;
   speedMph: number;
+  /**
+   * The instant this state describes: the cursor itself while interpolating,
+   * or the sample's own time when falling back to the nearest one. The readout
+   * quotes it, so it must be the time the shown values actually belong to.
+   */
+  timestampMs: number;
 }
 
 /** Beyond this gap between samples there is nothing sensible to interpolate. */
@@ -64,6 +70,7 @@ export function vehicleAt(points: CleanPoint[], timestampMs: number | null): Veh
         longitude: before.longitude + (after.longitude - before.longitude) * t,
         headingDeg: lerpAngle(before.headingDeg, after.headingDeg, t),
         speedMph: kphToMph(before.smoothedSpeedKph + (after.smoothedSpeedKph - before.smoothedSpeedKph) * t),
+        timestampMs,
       };
     }
   }
@@ -83,5 +90,6 @@ export function vehicleAt(points: CleanPoint[], timestampMs: number | null): Veh
     longitude: best.longitude,
     headingDeg: best.headingDeg,
     speedMph: kphToMph(best.smoothedSpeedKph),
+    timestampMs: best.timestampMs,
   };
 }

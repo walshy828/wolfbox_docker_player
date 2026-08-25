@@ -2,7 +2,7 @@ import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
 import { existsSync, readdirSync } from 'node:fs';
 import {
-  parseClipName, pairClips, buildTrips, CLIP_FOLDERS, type ClipRef,
+  parseClipName, clipFolder, pairClips, buildTrips, CLIP_FOLDERS, type ClipRef,
 } from '../src/catalog.ts';
 import { CARD } from './helpers.ts';
 
@@ -119,5 +119,16 @@ describe('the reference card', { skip: existsSync(CARD) ? false : 'card not moun
     const span = [trips[0]!.startLocalMs, trips.at(-1)!.endLocalMs].map((ms) =>
       new Date(ms).toISOString().slice(0, 10));
     assert.deepEqual(span, ['2026-08-01', '2026-08-24']);
+  });
+});
+
+describe('clipFolder', () => {
+  test('is the inverse of the folder table', () => {
+    const name = '2026_08_01_112328_00.MP4';
+    for (const folder of CLIP_FOLDERS) {
+      const parsed = parseClipName(folder, name);
+      assert.ok(parsed, `${folder} should parse ${name}`);
+      assert.equal(clipFolder(parsed.camera, parsed.kind), folder);
+    }
   });
 });

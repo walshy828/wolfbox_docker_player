@@ -3,7 +3,9 @@
 A cross-platform player for the [WolfBox Player 1](https://wolfbox.com/pages/wolfbox-player-1)
 dash cam. Runs on a Chromebook, Linux, Mac or Windows machine: plug in the SD card,
 point the app at it, and get trips, synced front/rear playback, and a map of the
-route coloured by speed.
+route coloured by speed. Drives, parking events and individual clips can be
+deleted from the card too -- the app asks for write access the first time, and
+confirms every delete, because there is no undo.
 
 The official player is Windows-only in practice (there is a Mac build; there is no
 Linux or ChromeOS one).
@@ -160,7 +162,13 @@ Clips are 60 s, named `YYYY_MM_DD_HHMMSS_<cam>[_b].MP4`.
 - **The local date and the UTC time-of-day disagree near midnight.** An evening
   drive in the US is already tomorrow in UTC, and the camera never records its
   offset, so a naive pairing puts the clip 24 hours in the past.
-- **Nothing snaps to roads.** Not every drive is on one.
+- **Nothing snaps to roads** for the route line. Not every drive is on one.
+  Speed-limit matching does snap, but reports what it could not match rather
+  than forcing a road onto every sample.
+- **The reported speed is accurate**, despite an earlier note in this repo to
+  the contrary. Measured over twelve clips of the reference card, the camera's
+  speed field tracks GPS-derived speed to within 0.6%, and the camera's own
+  burnt-in overlay agrees to about 1%. It is sound to compare against a limit.
 
 ## Using it
 
@@ -179,6 +187,13 @@ Escape or the collapse control returns them. Expanding applies fixed
 positioning to the existing element rather than moving it in the tree, so the
 video keeps playing from where it was and the map keeps its tiles and view.
 
+The side panels are pinned open by default. The pin control on each one hands
+its column back to the video and leaves a narrow labelled rail at the edge of
+the window; hovering that rail -- or tabbing into the panel -- floats the panel
+back over the workspace, and clicking the rail pins it open again. The choice
+is remembered per browser, and both panels stay mounted while collapsed, so the
+trip list keeps its scroll position and the map keeps its tiles.
+
 ### Time zones
 
 Dash cams are routinely set to the wrong zone -- the reference card was
@@ -188,6 +203,65 @@ only a naive local reading, so converting them needs the camera's offset, which
 is measured once per card from the first clip that has a GPS fix. Where that
 offset cannot be measured the raw camera clock is shown rather than a
 plausible-looking wrong time.
+
+### Speed limits
+
+The drive summary can compare the speed driven against the speed limit for the
+road, in a **Speed limits** panel below the trip stats.
+
+**It is off until you open it.** Limits come from OpenStreetMap, which means a
+lookup leaves the machine — so the panel is collapsed by default and nothing is
+requested until it is opened. This is the one part of the app that talks to a
+third party about where you drove (the map tiles aside). Requests are made to
+the local service, not from the browser, and are keyed to zoom-13 tiles roughly
+5 km across, so no request names a street.
+
+**What counts as speeding.** Being briefly over a limit is ordinary driving, so
+a stretch is only reported when the car was more than **5 mph** over for at
+least **10 continuous seconds**. Arming is a leaky counter rather than an
+unbroken run — at 1 Hz a single noisy sample would otherwise erase a genuine
+forty-second stretch. Once open, a stretch stays open until the car is back at
+or under the limit for five seconds: closing at the tolerance instead would
+record a driver easing off from +9 to +4 mph as two offences rather than one.
+Crossing into a new limit closes the stretch, so motorway speeding is never
+carried into town.
+
+**Matching a sample to a road** uses distance, the direction of travel and
+which road the car was on a second ago. Direction is what separates a divided
+highway's two carriageways, which are close enough together that distance alone
+picks the wrong one. The case that stays genuinely hard is a frontage road
+running the same way as the arterial beside it, separated only by a distance
+comparable to the GPS error — which is why every reported stretch names the
+road it was matched to.
+
+**Coverage is reported, always.** OpenStreetMap's `maxspeed` tagging is uneven:
+around the reference card, motorways and trunk roads are 100% tagged by length,
+secondary and tertiary roads 22–29%, and residential and service roads not at
+all. Where nothing is tagged, a limit is assumed from the road class and
+**marked as assumed**; assumed limits are kept out of the headline figure
+entirely, and where too little of a route had a known limit no score is shown
+rather than a flattering one. The panel always states how much of the drive it
+actually knew about.
+
+The map's colour legend gains a **vs limit** view once limits have loaded,
+painting how far over the limit each stretch was instead of the speed driven.
+Stretches with no known limit are drawn dashed and neutral, so "we don't know"
+can never be mistaken for "nothing wrong here".
+
+This is a review tool over crowd-sourced data and consumer GPS. It is a guide
+to footage worth watching, not a record of what happened.
+
+#### Configuring the lookup
+
+| Variable | Default | What it does |
+| --- | --- | --- |
+| `WOLFBOX_OVERPASS_URLS` | two public endpoints | Comma-separated Overpass endpoints, tried in turn. Set empty to disable lookups and serve only what is already cached. |
+| `WOLFBOX_OSM_TTL_DAYS` | `30` | How long a cached tile is fresh. Expired tiles are still served if the lookup fails. |
+| `WOLFBOX_OSM_CACHE_BYTES` | `256 MB` | Budget for cached road data, evicted least-recently-used. Separate from the video proxy cache so a burst of transcoding cannot evict it. |
+
+Overpass is run on donated hardware. The service caches every tile to disk for
+a month, serialises its upstream calls, waits at least a second between them
+and identifies itself — please leave those in place.
 
 ## Speed colours
 
