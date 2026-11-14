@@ -1,9 +1,8 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
-import { kphToMph } from '@wolfbox/telemetry';
+import { useMemo, useState, type ReactNode } from 'react';
+import { formatDuration, kphToMph } from '@wolfbox/telemetry';
 import { isParkingEvent, type CardTrip } from '../card.ts';
 import { describeSelection, describeTrips } from '../deletion.ts';
 import { formatLocal, type TimeContext } from '../time.ts';
-import { useTripAdherence, type TripAdherenceEntry } from '../tripAdherence.ts';
 import { metersToMiles } from '../units.ts';
 import type { TripStatsEntry } from '../tripStats.ts';
 import {
@@ -38,122 +37,87 @@ interface Props {
 const DAY: Intl.DateTimeFormatOptions = { weekday: 'short', month: 'short', day: 'numeric' };
 const CLOCK: Intl.DateTimeFormatOptions = { hour: 'numeric', minute: '2-digit' };
 
+/** Circumference of the list's score ring, at r=15. */
+const RING = 2 * Math.PI * 15;
+
+const BAND_LABEL = { low: 'Low risk', moderate: 'Some risk', high: 'High risk' } as const;
+
 /**
- * Distance, top speed, and start/end place, once the background queue in
- * `useTripStats` has reached this trip. Renders nothing for a trip with no
- * GPS fix at all (a parking event under an overpass, say) rather than a blank
- * "0 mi" that would read as a real measurement.
- *
- * The top-speed figure is tinted by the drive's worst moment over a known
- * speed limit, once that lazy adherence lookup has resolved -- severe red,
- * moderate orange -- so the number that already reads as "how fast" also
- * reads as "how far over" without a second figure competing for attention.
+ * The drive's risk score as a small ring, coloured by band. A dashed ring is a
+ * score made before speed limits were known, so a provisional 95 cannot be
+ * mistaken for a final one.
  */
-function TripStatsLine({ entry, adherence }: { entry?: TripStatsEntry; adherence?: TripAdherenceEntry }) {
-  if (!entry || entry.status === 'unavailable') return null;
-  if (entry.status === 'pending') {
-    return <span className="trip-stats trip-stats--pending">Reading GPS&hellip;</span>;
-  }
-
-  const miles = metersToMiles(entry.distanceMeters);
-  const topMph = Math.round(kphToMph(entry.maxSpeedKph));
-  const route = entry.startLabel || entry.endLabel
-    ? `${entry.startLabel ?? 'Unknown'} → ${entry.endLabel ?? 'Unknown'}`
-    : null;
-  const peakSeverity = adherence?.status === 'ready' ? adherence.peakSeverity : null;
-  const topClass = peakSeverity === 'severe' ? 'top-speed top-speed--severe'
-    : peakSeverity === 'moderate' ? 'top-speed top-speed--moderate'
-    : 'top-speed';
-
+function RiskRing({ entry }: { entry?: TripStatsEntry }) {
+  if (!entry || entry.status === 'pending') return <span className="risk-ring risk-ring--pending" aria-hidden="true" />;
+  if (entry.status !== 'ready' || !entry.risk) return <span className="risk-ring risk-ring--none" aria-hidden="true" />;
+  const { score, band, includesSpeeding } = entry.risk;
+  const provisional = !includesSpeeding && entry.limits === 'pending';
   return (
-    <span className="trip-stats">
-      <span>{miles.toFixed(1)} mi &middot; <span className={topClass}>{topMph} mph top</span></span>
-      {route && <span className="trip-route">{route}</span>}
-    </span>
-  );
-}
-
-function WarningTriangle() {
-  return (
-    <svg viewBox="0 0 16 16" width="11" height="11" aria-hidden="true">
-      <path d="M8 1.5 L15 14.5 H1 Z" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinejoin="round" />
-      <path d="M8 6 V9.5" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" />
-      <circle cx="8" cy="11.8" r="0.9" fill="currentColor" />
+    <svg
+      className={`risk-ring risk-ring--${band}${provisional ? ' risk-ring--provisional' : ''}`}
+      viewBox="0 0 36 36" width="36" height="36" role="img"
+      aria-label={`Score ${score} of 100, ${BAND_LABEL[band]}${provisional ? ', speed limits still loading' : ''}`}
+    >
+      <circle className="risk-ring-track" cx="18" cy="18" r="15" />
+      <circle
+        className="risk-ring-value" cx="18" cy="18" r="15"
+        strokeDasharray={RING} strokeDashoffset={RING * (1 - score / 100)}
+        transform="rotate(-90 18 18)"
+      />
+      <text x="18" y="22.5" textAnchor="middle">{score}</text>
     </svg>
   );
 }
 
-/**
- * Two independent triangles marking hard braking/acceleration on a row, so a
- * bad stop is visible while scanning the list rather than only after opening
- * the drive. The red triangle is always the severe count and the orange one
- * always the moderate count -- each rendered only when its own count is
- * nonzero, so a trip with both shows both rather than one badge picking the
- * worse of the two and hiding the other.
- */
-function HarshEventBadges({ counts }: { counts: { moderate: number; severe: number } }) {
-  if (counts.moderate === 0 && counts.severe === 0) return null;
+/** The two factors that cost the most, as chips, so the list says why as well as how much. */
+function RiskReasons({ entry }: { entry?: TripStatsEntry }) {
+  if (!entry || entry.status !== 'ready' || !entry.risk) return null;
+  const { factors } = entry.risk;
+  if (factors.length === 0) {
+    return entry.risk.includesSpeeding
+      ? <span className="reasons"><span className="reason reason--clean">Clean drive</span></span>
+      : null;
+  }
+  const shown = factors.slice(0, 2);
+  return (
+    <span className="reasons">
+      {shown.map((factor) => (
+        <span key={factor.key} className={`reason reason--${factor.severity}`} title={factor.detail}>
+          {factor.label}
+        </span>
+      ))}
+      {factors.length > shown.length && (
+        <span className="reason reason--more" title={factors.slice(2).map((f) => f.label).join(', ')}>
+          +{factors.length - shown.length}
+        </span>
+      )}
+    </span>
+  );
+}
 
+/** Distance, speeds and route, once the background queue has reached this trip. */
+function TripFigures({ entry, minutes }: { entry?: TripStatsEntry; minutes: number }) {
+  if (!entry || entry.status === 'pending') {
+    return <span className="trip-figures trip-figures--pending">{minutes} min &middot; reading GPS&hellip;</span>;
+  }
+  if (entry.status === 'unavailable') return <span className="trip-figures">{minutes} min &middot; no GPS</span>;
+  const route = entry.startLabel || entry.endLabel
+    ? `${entry.startLabel ?? 'Unknown'} → ${entry.endLabel ?? 'Unknown'}`
+    : null;
+  const speeding = entry.risk?.speeding;
   return (
     <>
-      {counts.severe > 0 && (
-        <span
-          className="harsh-badge harsh-badge--severe"
-          title={`${counts.severe} severe hard braking/acceleration event${counts.severe === 1 ? '' : 's'}`}
-        >
-          <WarningTriangle />
-          {counts.severe}
-        </span>
-      )}
-      {counts.moderate > 0 && (
-        <span
-          className="harsh-badge harsh-badge--moderate"
-          title={`${counts.moderate} moderate hard braking/acceleration event${counts.moderate === 1 ? '' : 's'}`}
-        >
-          <WarningTriangle />
-          {counts.moderate}
-        </span>
-      )}
+      {route && <span className="trip-route">{route}</span>}
+      <span className="trip-figures">
+        <span>{metersToMiles(entry.distanceMeters).toFixed(1)} mi</span>
+        <span>{minutes} min</span>
+        <span>{Math.round(kphToMph(entry.maxSpeedKph))} top</span>
+        <span>{Math.round(kphToMph(entry.averageMovingSpeedKph))} avg</span>
+        {speeding && speeding.stretchSec > 0 && (
+          <span className="trip-figures-over">{formatDuration(speeding.stretchSec)} over</span>
+        )}
+      </span>
     </>
-  );
-}
-
-/**
- * Share of the drive spent at or under a known speed limit, once the lazy
- * per-row OSM lookup in `useTripAdherence` has resolved for this trip. Renders
- * nothing until then, and nothing at all if too little of the route had a
- * known limit to score.
- */
-function AdherenceBadge({ adherence }: { adherence?: TripAdherenceEntry }) {
-  if (!adherence || adherence.status !== 'ready' || adherence.withinShare == null) return null;
-  const pct = Math.round(adherence.withinShare * 100);
-  return (
-    <span className="adherence-badge" title={`${pct}% of this drive was at or under the speed limit`}>
-      {pct}% limit
-    </span>
-  );
-}
-
-const SCORE_LABEL: Record<'good' | 'fair' | 'poor', string> = {
-  good: 'safe', fair: 'fair', poor: 'rough',
-};
-
-/**
- * A 0-100 drive score, badged by band. Built from braking/acceleration only
- * in this list -- speed-limit adherence needs a per-trip network lookup the
- * app only makes for the drive currently open, so it never feeds a score
- * shown here (see `driveScore.ts` and `limits.ts`).
- */
-function ScoreBadge({ entry }: { entry?: TripStatsEntry }) {
-  if (!entry || entry.status !== 'ready' || !entry.score) return null;
-  const { value, band } = entry.score;
-  return (
-    <span
-      className={`score-badge score-badge--${band}`}
-      title={`Drive score ${value}/100 (${SCORE_LABEL[band]}) — based on hard braking and acceleration; open the drive to see speed-limit adherence.`}
-    >
-      {value}
-    </span>
   );
 }
 
@@ -180,32 +144,12 @@ export function TripList({
   /** Where a shift-click range starts: the last row ticked on its own. */
   const [anchorId, setAnchorId] = useState<string | null>(null);
 
-  const { entries: adherenceByTrip, request: requestAdherence } = useTripAdherence();
-  const scrollRef = useRef<HTMLDivElement | null>(null);
-  const rowTrips = useRef(new WeakMap<Element, CardTrip>());
-  const observer = useRef<IntersectionObserver | null>(null);
-
-  useEffect(() => {
-    observer.current = new IntersectionObserver((observed) => {
-      for (const rowEntry of observed) {
-        if (!rowEntry.isIntersecting) continue;
-        const trip = rowTrips.current.get(rowEntry.target);
-        observer.current?.unobserve(rowEntry.target);
-        if (trip) requestAdherence(trip);
-      }
-    }, { root: scrollRef.current, rootMargin: '200px' });
-    return () => observer.current?.disconnect();
-  }, [requestAdherence]);
-
-  const observeRow = useCallback((trip: CardTrip) => (node: HTMLLIElement | null) => {
-    if (!node) return;
-    rowTrips.current.set(node, trip);
-    observer.current?.observe(node);
-  }, []);
-
   const visible = useMemo(
-    () => selectTrips(drives, events, filter, sort),
-    [drives, events, filter, sort],
+    () => selectTrips(drives, events, filter, sort, (trip) => {
+      const entry = stats.get(trip.id);
+      return entry?.status === 'ready' ? entry.risk?.score : undefined;
+    }),
+    [drives, events, filter, sort, stats],
   );
   const checked = useMemo(
     () => visible.filter((trip) => checkedIds.has(trip.id)),
@@ -213,7 +157,7 @@ export function TripList({
   );
 
   // Day headings only make sense while the list is in time order.
-  const grouped = sort !== 'longest';
+  const grouped = sort === 'newest' || sort === 'oldest';
   const noun = filter === 'events' ? 'event' : 'drive';
 
   const check = (trip: CardTrip, shiftKey: boolean) => {
@@ -261,6 +205,7 @@ export function TripList({
           Sort
           <select value={sort} onChange={(event) => onSortChange(event.target.value as TripSort)}>
             <option value="newest">Newest first</option>
+            <option value="riskiest">Riskiest first</option>
             <option value="oldest">Oldest first</option>
             <option value="longest">Longest first</option>
           </select>
@@ -296,7 +241,7 @@ export function TripList({
         </div>
       )}
 
-      <div className="sidebar-scroll" ref={scrollRef}>
+      <div className="sidebar-scroll">
         {visible.length === 0 ? (
           <p className="muted pad">Nothing matches this filter.</p>
         ) : (
@@ -309,9 +254,8 @@ export function TripList({
               const asking = confirming?.kind === 'trip' && confirming.id === trip.id;
               const rowNoun = isParkingEvent(trip) ? 'event' : 'drive';
               const entry = stats.get(trip.id);
-              const adherence = adherenceByTrip.get(trip.id);
               return (
-                <li key={trip.id} ref={observeRow(trip)}>
+                <li key={trip.id}>
                   {heading && <h3 className="day-heading">{heading}</h3>}
                   {asking ? (
                     <ConfirmInline
@@ -337,18 +281,17 @@ export function TripList({
                         onClick={() => onSelect(trip)}
                         aria-current={trip.id === selectedId}
                       >
-                        <span className="trip-when">
-                          {formatLocal(trip.startLocalMs, time, CLOCK)}
-                          {!grouped && <span className="trip-day">{day}</span>}
-                          {entry?.status === 'ready' && <HarshEventBadges counts={entry.harshEvents} />}
-                          <ScoreBadge entry={entry} />
-                          <AdherenceBadge adherence={adherence} />
+                        <RiskRing entry={entry} />
+                        <span className="trip-body">
+                          <span className="trip-when">
+                            {formatLocal(trip.startLocalMs, time, CLOCK)}
+                            {!grouped && <span className="trip-day">{day}</span>}
+                            {trip.hasEvent && <span className="badge badge--warn">event</span>}
+                            {trip.clips.length === 1 && <span className="trip-day">1 clip</span>}
+                          </span>
+                          <TripFigures entry={entry} minutes={minutes} />
+                          <RiskReasons entry={entry} />
                         </span>
-                        <span className="trip-meta">
-                          {minutes} min · {trip.clips.length} clip{trip.clips.length === 1 ? '' : 's'}
-                          {trip.hasEvent && <span className="badge badge--warn">event</span>}
-                        </span>
-                        <TripStatsLine entry={entry} adherence={adherence} />
                       </button>
                       <DeleteButton
                         className="icon-button trip-delete"

@@ -16,6 +16,14 @@ const drives = [morning, noon, evening];
 const events = [trip('bump', T + 200 * MINUTE, 1, true)];
 
 describe('selectTrips', () => {
+  test('riskiest puts the lowest score first and unscored trips last', () => {
+    const scores: Record<string, number> = { morning: 90, evening: 55 };
+    assert.deepEqual(
+      selectTrips(drives, events, 'drives', 'riskiest', (t) => scores[t.id]).map((t) => t.id),
+      ['evening', 'morning', 'noon'],
+    );
+  });
+
   test('defaults to newest first, which is the drive you just took', () => {
     assert.deepEqual(
       selectTrips(drives, events, 'drives', 'newest').map((t) => t.id),

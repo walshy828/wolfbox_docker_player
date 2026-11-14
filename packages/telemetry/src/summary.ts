@@ -1,6 +1,7 @@
 import type { CleanPoint } from './clean.ts';
 import { haversineMeters, kphToMph } from './geo.ts';
 import { detectHarshEvents, type HarshEvent } from './harshEvents.ts';
+import { detectCornering } from './cornering.ts';
 
 /** Below this the vehicle is treated as stopped, absorbing GPS jitter at rest. */
 export const STOPPED_KPH = 3;
@@ -22,7 +23,7 @@ export interface TripSummary {
   bounds?: { north: number; south: number; east: number; west: number };
   /** Time in seconds spent in each bucket of `SPEED_BUCKETS_MPH`. */
   histogramMph: number[];
-  /** Hard-braking and hard-acceleration events detected over the trip. */
+  /** Hard braking, hard acceleration and aggressive cornering, in time order. */
   harshEvents: HarshEvent[];
 }
 
@@ -110,6 +111,7 @@ export function summarize(points: CleanPoint[]): TripSummary | null {
     end: { latitude: last.latitude, longitude: last.longitude },
     bounds: { north, south, east, west },
     histogramMph,
-    harshEvents: detectHarshEvents(points),
+    harshEvents: [...detectHarshEvents(points), ...detectCornering(points)]
+      .sort((a, b) => a.startMs - b.startMs),
   };
 }

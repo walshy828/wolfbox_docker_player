@@ -1,8 +1,11 @@
 import { useEffect, useRef, useState } from 'react';
-import { computeDriveScore, type DriveScore } from '@wolfbox/telemetry';
+import { assessRisk, type DriveRisk, type TripAdherence, type TripSummary } from '@wolfbox/telemetry';
 import type { CardTrip } from './card.ts';
 import { loadTripTrack } from './track.ts';
 import { reverseGeocode } from './geocode.ts';
+import { computeAdherence } from './limits.ts';
+
+export type LimitsState = 'pending' | 'ready' | 'unavailable';
 
 export type TripStatsEntry =
   | { status: 'pending' }
@@ -11,20 +14,23 @@ export type TripStatsEntry =
       status: 'ready';
       distanceMeters: number;
       maxSpeedKph: number;
+      averageMovingSpeedKph: number;
+      movingSec: number;
       /** Undefined while the place name is still being looked up, or has none. */
       startLabel?: string;
       endLabel?: string;
-      /** Hard-braking/acceleration counts, from GPS alone -- no network involved. */
+      /** Hard braking, acceleration and cornering counts, from GPS alone. */
       harshEvents: { moderate: number; severe: number };
       /**
-       * Behaviour-only score (braking/acceleration, not speed-limit adherence,
-       * which needs a lookup this background pass deliberately never makes --
-       * see `limits.ts`). Null for a trip too short to score.
+       * Where the speed-limit lookup has got to. The risk score is shown from
+       * the start, from behaviour alone, and is replaced once limits arrive;
+       * `risk.includesSpeeding` says which one is on screen.
        */
-      score: DriveScore | null;
+      limits: LimitsState;
+      risk: DriveRisk | null;
     };
 
-/** Runs one microtask-free tick later, off the JS thread's busy stretches when possible. */
+/** Lets the browser breathe between trips, off its busy stretches when it can. */
 function idle(): Promise<void> {
   return new Promise((resolve) => {
     if (typeof requestIdleCallback === 'function') requestIdleCallback(() => resolve(), { timeout: 2000 });
@@ -32,15 +38,20 @@ function idle(): Promise<void> {
   });
 }
 
+/** Speeding results outlive a re-render of the list: the same trip is never looked up twice in a tab. */
+const adherenceCache = new Map<string, TripAdherence | null>();
+
 /**
- * Fills in distance, top speed, and start/end place names for every trip in
- * the list, in the background.
+ * Fills in every trip's figures and risk score, in the background.
  *
- * Each figure comes from the same GPS decode the drive summary uses, so it is
- * expensive -- reading video files, not metadata -- which is why trips are
- * processed one at a time, off the interaction path, rather than all at once.
- * `loadTripTrack`'s own cache means a trip already opened, or already warmed
- * by a previous run of this queue, resolves instantly on repeat visits.
+ * Two passes. The first reads each trip's GPS off the card -- local, but slow,
+ * about 0.7 s a clip -- and gives the list distance, speeds, place names and a
+ * behaviour-only score. The second looks up speed limits for each drive, one
+ * at a time, and replaces the score with one that includes speeding. Running
+ * all of the local pass first means the list is useful within seconds, and
+ * sequential lookups keep the load on the volunteer-run OpenStreetMap service
+ * to one trip's tiles at a time (the local service caches every tile for a
+ * month, so a card's second visit costs nothing upstream).
  */
 export function useTripStats(trips: readonly CardTrip[]): ReadonlyMap<string, TripStatsEntry> {
   const [stats, setStats] = useState<ReadonlyMap<string, TripStatsEntry>>(() => new Map());
@@ -58,42 +69,51 @@ export function useTripStats(trips: readonly CardTrip[]): ReadonlyMap<string, Tr
       return changed ? next : prev;
     });
 
-    const queue = trips.filter((trip) => !statsRef.current.has(trip.id));
+    const queue = trips.filter((trip) => {
+      const entry = statsRef.current.get(trip.id);
+      return !entry || (entry.status === 'ready' && entry.limits === 'pending');
+    });
     if (queue.length === 0) return;
 
     const controller = new AbortController();
     let cancelled = false;
+    const update = (id: string, patch: (entry: TripStatsEntry | undefined) => TripStatsEntry | undefined) =>
+      setStats((prev) => {
+        const next = patch(prev.get(id));
+        return next ? new Map(prev).set(id, next) : prev;
+      });
 
     void (async () => {
+      const summaries = new Map<string, { summary: TripSummary; points: Parameters<typeof computeAdherence>[0] }>();
+
+      // Pass one: the card.
       for (const trip of queue) {
         if (cancelled) return;
         await idle();
         if (cancelled) return;
-
-        setStats((prev) => new Map(prev).set(trip.id, { status: 'pending' }));
+        if (!statsRef.current.has(trip.id)) update(trip.id, () => ({ status: 'pending' }));
         try {
           const track = await loadTripTrack(trip, { signal: controller.signal });
           if (cancelled) return;
           const { summary } = track;
-          if (!summary) {
-            setStats((prev) => new Map(prev).set(trip.id, { status: 'unavailable' }));
-            continue;
-          }
+          if (!summary) { update(trip.id, () => ({ status: 'unavailable' })); continue; }
+          summaries.set(trip.id, { summary, points: track.points });
 
-          const harshEvents = {
-            moderate: summary.harshEvents.filter((e) => e.severity === 'moderate').length,
-            severe: summary.harshEvents.filter((e) => e.severity === 'severe').length,
-          };
-
-          setStats((prev) => new Map(prev).set(trip.id, {
+          const cachedAdherence = adherenceCache.get(trip.id);
+          update(trip.id, (existing) => ({
             status: 'ready',
             distanceMeters: summary.distanceMeters,
             maxSpeedKph: summary.maxSpeedKph,
-            harshEvents,
-            score: computeDriveScore({
-              harshEvents: summary.harshEvents,
-              distanceMeters: summary.distanceMeters,
-            }),
+            averageMovingSpeedKph: summary.averageMovingSpeedKph,
+            movingSec: summary.movingSec,
+            startLabel: existing?.status === 'ready' ? existing.startLabel : undefined,
+            endLabel: existing?.status === 'ready' ? existing.endLabel : undefined,
+            harshEvents: {
+              moderate: summary.harshEvents.filter((e) => e.severity === 'moderate').length,
+              severe: summary.harshEvents.filter((e) => e.severity === 'severe').length,
+            },
+            limits: cachedAdherence === undefined ? 'pending' : cachedAdherence ? 'ready' : 'unavailable',
+            risk: assessRisk({ summary, adherence: cachedAdherence }),
           }));
 
           const [startLabel, endLabel] = await Promise.all([
@@ -105,19 +125,37 @@ export function useTripStats(trips: readonly CardTrip[]): ReadonlyMap<string, Tr
               : Promise.resolve(null),
           ]);
           if (cancelled) return;
-
-          setStats((prev) => {
-            const existing = prev.get(trip.id);
-            if (!existing || existing.status !== 'ready') return prev;
-            return new Map(prev).set(trip.id, {
-              ...existing,
-              startLabel: startLabel ?? undefined,
-              endLabel: endLabel ?? undefined,
-            });
-          });
+          update(trip.id, (existing) => existing?.status === 'ready'
+            ? { ...existing, startLabel: startLabel ?? undefined, endLabel: endLabel ?? undefined }
+            : undefined);
         } catch {
-          if (!cancelled) setStats((prev) => new Map(prev).set(trip.id, { status: 'unavailable' }));
+          if (!cancelled) update(trip.id, () => ({ status: 'unavailable' }));
         }
+      }
+
+      // Pass two: speed limits, newest drive first, since that is the one most
+      // likely to be reviewed next.
+      const pending = queue
+        .filter((trip) => summaries.has(trip.id) && !adherenceCache.has(trip.id))
+        .sort((a, b) => b.startLocalMs - a.startLocalMs);
+      for (const trip of pending) {
+        if (cancelled) return;
+        const { summary, points } = summaries.get(trip.id)!;
+        let adherence: TripAdherence | null = null;
+        try {
+          adherence = (await computeAdherence(points, controller.signal))?.adherence ?? null;
+        } catch {
+          if (cancelled) return;
+        }
+        if (cancelled) return;
+        adherenceCache.set(trip.id, adherence);
+        update(trip.id, (existing) => existing?.status === 'ready'
+          ? {
+              ...existing,
+              limits: adherence ? 'ready' : 'unavailable',
+              risk: assessRisk({ summary, adherence }),
+            }
+          : undefined);
       }
     })();
 

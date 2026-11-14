@@ -26,6 +26,7 @@ card itself.
 npm install
 npm test                                    # telemetry parser
 npm run dev -w @wolfbox/web                 # UI on :5173, proxies /api to :8080
+WOLFBOX_API=http://localhost:8088 npm run dev -w @wolfbox/web   # ...or to the compose container
 (cd server && uvicorn app:app --port 8080)  # transcoder
 ```
 
@@ -176,10 +177,12 @@ The window is three columns that scroll independently, so a long trip list can
 never push the player or the map out of view:
 
 - **Left** — trips, filterable by drives / parking events and sortable by
-  newest (the default), oldest or longest. A card is a rolling loop, so the
-  drive worth reviewing is nearly always the most recent one.
-- **Centre** — front and rear video, pinned in place; the trip summary scrolls
-  beneath it.
+  newest (the default), **riskiest**, oldest or longest. Each drive shows its
+  risk score as a ring, where it went, its distance, top and average speed,
+  time over the limit, and the two things that cost it the most points.
+- **Centre** — front and rear video (side by side, picture-in-picture, or one
+  camera), pinned in place, with the drive timeline under it; the trip
+  summary scrolls beneath that.
 - **Right** — the route map, speed readout and colour legend.
 
 The video and the map each have an expand control that fills the window, and
@@ -194,6 +197,49 @@ back over the workspace, and clicking the rail pins it open again. The choice
 is remembered per browser, and both panels stay mounted while collapsed, so the
 trip list keeps its scroll position and the map keeps its tiles.
 
+### Drive timeline
+
+The strip under the video is the whole drive on one axis: speed as a filled
+trace, the limit as a dashed line, every sustained speeding stretch as a red
+band, and a marker for each hard stop, hard launch and sharp turn. Click
+anywhere to seek there. **Prev** / **Next** -- or `[` and `]` from anywhere on
+the page -- step through the flagged moments, landing a few seconds early so
+the moment is seen happening rather than its aftermath.
+
+### Risk score
+
+Every drive gets a 0-100 score, higher being safer, built by deduction so it
+always comes with its reasons:
+
+| factor | what costs points | most it can cost |
+|---|---|---|
+| Speeding | share of moving time over limit + 5 mph, plus each sustained stretch by severity | 45 |
+| Hard stops | events per 10 miles, severe counting 2.5x | 30 |
+| Hard launches | events per 10 miles | 25 |
+| Sharp turns | events per 10 miles | 25 |
+| Top speed | any time at 80+ mph | 15 |
+
+Rates are judged over at least 5 miles and speeding time over at least 10
+minutes of driving, so a short errand is not punished as a large fraction of
+nothing. The worst moment then caps the score, because averages forgive: 20+
+over a signed limit caps it at 64 (high risk), 90+ mph at 60, and any severe
+hard event at 84. Bands are **low risk** (85+), **some risk** (65-84) and
+**high risk** (under 65).
+
+Limits guessed from the road class count for half. A score made before the
+speed-limit lookup has finished is drawn with a dashed ring, and the drive
+summary says when speeding was not counted.
+
+**Cornering** is measured from GPS: lateral force is speed times the rate the
+heading turns. That needed one decoding fix -- the camera writes the heading's
+scale factor beside it, usually 100 but occasionally 1000, and reading it as a
+constant 100 turned the odd sample into a 900-degree heading and several g of
+phantom cornering. With the scale honoured, ordinary driving on the reference
+card peaks around 0.25 g, so **0.30 g** is flagged and **0.40 g** is severe.
+Speed changes beyond 1.3 g in a second (no road car manages that) are treated
+as a receiver artefact -- typically a new fix reading 0 then 104 km/h -- and
+ignored.
+
 ### Time zones
 
 Dash cams are routinely set to the wrong zone -- the reference card was
@@ -206,15 +252,17 @@ plausible-looking wrong time.
 
 ### Speed limits
 
-The drive summary can compare the speed driven against the speed limit for the
-road, in a **Speed limits** panel below the trip stats.
+The app compares the speed driven against the speed limit for the road, for
+every drive on the card, so the list can be sorted by risk.
 
-**It is off until you open it.** Limits come from OpenStreetMap, which means a
-lookup leaves the machine — so the panel is collapsed by default and nothing is
-requested until it is opened. This is the one part of the app that talks to a
-third party about where you drove (the map tiles aside). Requests are made to
-the local service, not from the browser, and are keyed to zoom-13 tiles roughly
-5 km across, so no request names a street.
+**Limits come from OpenStreetMap**, which means a lookup leaves the machine.
+This is the one part of the app that talks to a third party about where you
+drove (the map tiles and place names aside). Requests are made to the local
+service, not from the browser, and are keyed to zoom-13 tiles roughly 5 km
+across, so no request names a street. Drives are looked up one at a time,
+newest first, after every drive's GPS has been read; the service caches every
+tile for a month, so a card's second visit costs nothing upstream. Set
+`WOLFBOX_OVERPASS_URLS` empty to keep everything local.
 
 **What counts as speeding.** Being briefly over a limit is ordinary driving, so
 a stretch is only reported when the car was more than **5 mph** over for at

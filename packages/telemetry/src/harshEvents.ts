@@ -44,7 +44,21 @@ export const MERGE_GAP_SAMPLES = 1;
  */
 export const MAX_RELIABLE_GAP_SEC = 2;
 
-export type HarshKind = 'braking' | 'acceleration';
+/**
+ * No road car changes speed faster than about 1.3 g (46 km/h in a second);
+ * emergency braking on dry tarmac is about 1 g. A larger delta is the receiver,
+ * not the car -- most often the first sample of a new fix reporting 0 km/h
+ * a second before the real 104 km/h, which read as a 2.9 g launch on the
+ * reference card. Such a step is skipped rather than reported as the hardest
+ * event of the drive.
+ */
+export const MAX_PLAUSIBLE_DELTA_KPH = 46;
+
+/** Cornering events come from `detectCornering` (cornering.ts), not from this file. */
+export type HarshKind = 'braking' | 'acceleration' | 'cornering';
+/** kph/s per g (3.6 * 9.80665). */
+const KPH_PER_S_PER_G = 35.30394;
+
 export type HarshSeverity = 'moderate' | 'severe';
 
 export interface HarshEvent {
@@ -53,9 +67,22 @@ export interface HarshEvent {
   durationSec: number;
   kind: HarshKind;
   severity: HarshSeverity;
-  /** Largest-magnitude speed change seen during the event, signed (negative for braking). */
+  /**
+   * Largest-magnitude speed change seen during the event, signed (negative for
+   * braking), in km/h per second. Zero for cornering, which changes direction
+   * rather than speed.
+   */
   peakDeltaKph: number;
+  /**
+   * Peak force in g, signed. Longitudinal for braking (negative) and
+   * acceleration (positive); lateral for cornering (positive turning right).
+   */
+  peakG: number;
+  /** Which way a cornering event turned. Undefined for braking and acceleration. */
+  direction?: 'left' | 'right';
   peakAtMs: number;
+  /** Vehicle speed at the peak, km/h. */
+  speedKph: number;
   distanceMeters: number;
 }
 
@@ -86,6 +113,7 @@ export function detectHarshEvents(points: CleanPoint[]): HarshEvent[] {
     if (seconds > MAX_RELIABLE_GAP_SEC) { flush(); continue; }
 
     const deltaKph = (point.smoothedSpeedKph - previous.smoothedSpeedKph) / seconds;
+    if (Math.abs(deltaKph) > MAX_PLAUSIBLE_DELTA_KPH) { flush(); continue; }
     const triggered = Math.abs(deltaKph) >= HARSH_DELTA_KPH;
     const kind: HarshKind = deltaKph < 0 ? 'braking' : 'acceleration';
     const sample: Sample = { point, deltaKph };
@@ -133,7 +161,9 @@ function build(run: Sample[]): HarshEvent {
     kind: peak.deltaKph < 0 ? 'braking' : 'acceleration',
     severity: Math.abs(peak.deltaKph) >= SEVERE_DELTA_KPH ? 'severe' : 'moderate',
     peakDeltaKph: peak.deltaKph,
+    peakG: peak.deltaKph / KPH_PER_S_PER_G,
     peakAtMs: peak.point.timestampMs,
+    speedKph: peak.point.smoothedSpeedKph,
     distanceMeters,
   };
 }

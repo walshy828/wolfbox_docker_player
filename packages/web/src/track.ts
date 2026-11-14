@@ -5,6 +5,9 @@ import {
 import { cacheKey, readCached, writeCached } from './cache.ts';
 import type { CardTrip } from './card.ts';
 
+/** Bump whenever decoding changes what a clip's points contain. */
+const DECODER_VERSION = 'v2';
+
 export interface TripTrack {
   points: CleanPoint[];
   summary: TripSummary | null;
@@ -20,7 +23,9 @@ export interface TripTrack {
 /** Reads one clip's telemetry, using the cache when possible. */
 async function clipTelemetry(handle: FileSystemFileHandle, stride = 1): Promise<TelemetryPoint[]> {
   const file = await handle.getFile();
-  const key = `${cacheKey(file)}:${stride}`;
+  // The decoder version is part of the key: a fix to decoding (v2 honours the
+  // heading's per-sample scale) must not be masked by points cached before it.
+  const key = `${cacheKey(file)}:${stride}:${DECODER_VERSION}`;
 
   const cached = await readCached(key);
   if (cached) return cached;

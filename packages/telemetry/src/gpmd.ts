@@ -31,7 +31,8 @@ const OFF = {
   SECOND: 0x18,     // u32
   FIX: 0x20,        // u64, 1 = GPS fix valid
   SPEED_KNOTS: 0x48,// i64, / 1000 -> knots (NMEA speed over ground)
-  HEADING: 0x58,    // i64, / 100  -> degrees true
+  HEADING: 0x58,    // i64, / HEADING_SCALE -> degrees true
+  HEADING_SCALE: 0x60, // u64, usually 100, sometimes 1000
   DAY: 0x68,        // u32
   MONTH: 0x6c,      // u32
   YEAR: 0x70,       // u64
@@ -157,7 +158,7 @@ function decodeSample(view: DataView, index: number): TelemetryPoint | null {
     longitude: nmeaToDegrees(Number(view.getBigInt64(OFF.LONGITUDE, true))),
     speedKph: Number(view.getBigInt64(OFF.SPEED_KPH, true)) / 1000,
     speedKnots: Number(view.getBigInt64(OFF.SPEED_KNOTS, true)) / 1000,
-    headingDeg: Number(view.getBigInt64(OFF.HEADING, true)) / 100,
+    headingDeg: decodeHeading(view),
     accel: {
       x: view.getInt16(OFF.ACCEL, true),
       y: view.getInt16(OFF.ACCEL + 2, true),
@@ -165,6 +166,23 @@ function decodeSample(view: DataView, index: number): TelemetryPoint | null {
     },
     hasFix: Number(view.getBigUint64(OFF.FIX, true)) === 1,
   };
+}
+
+/**
+ * Heading in degrees, divided by the scale the firmware recorded beside it.
+ *
+ * The scale is usually 100 but on about one sample in two hundred it is 1000,
+ * with the raw value written at that scale (`90100` for 90.1 degrees). Dividing
+ * by a constant 100 turns those into headings of 901 degrees, which reads as a
+ * full spin in one second -- several g of fake cornering, and a vehicle marker
+ * that flips round. No-fix rows carry a scale of 0; they fall back to 100 and
+ * are discarded by `cleanTrack` anyway.
+ */
+function decodeHeading(view: DataView): number {
+  const raw = Number(view.getBigInt64(OFF.HEADING, true));
+  const scale = Number(view.getBigUint64(OFF.HEADING_SCALE, true));
+  const degrees = raw / (scale === 100 || scale === 1000 ? scale : 100);
+  return ((degrees % 360) + 360) % 360;
 }
 
 /**

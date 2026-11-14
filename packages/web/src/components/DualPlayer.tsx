@@ -62,7 +62,7 @@ interface Props {
   seekRequest: { clipIndex: number; seconds: number; token: number } | null;
   /** Fires continuously with the absolute instant currently on screen. */
   onClock: (timestampMs: number | null) => void;
-  layout: 'split' | 'front' | 'rear';
+  layout: 'split' | 'pip' | 'front' | 'rear';
   /** Deletes the clip on screen, front and rear together. */
   onDeleteClip: (index: number) => void;
   deleting: boolean;

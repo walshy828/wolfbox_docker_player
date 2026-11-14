@@ -129,12 +129,19 @@ describe('detectHarshEvents', () => {
   });
 
   test('the same jump in one real second is still flagged', () => {
+    // 40 km/h in a second (1.1 g) -- a real, if extreme, launch. The 48 km/h
+    // of the gap case above would be 1.4 g in one second, beyond any road car,
+    // and is rejected as a receiver artefact (MAX_PLAUSIBLE_DELTA_KPH).
     const events = detectHarshEvents(cleanTrack(gappy([
       { speedKph: 0, offsetSec: 0 },
       { speedKph: 0, offsetSec: 1 },
-      { speedKph: 48, offsetSec: 2 },
+      { speedKph: 40, offsetSec: 2 },
     ])));
     assert.equal(events.length, 1);
     assert.equal(events[0]!.kind, 'acceleration');
   });
+});
+
+test('a new fix jumping from 0 to highway speed is not a launch', () => {
+  assert.deepEqual(detect([0, 104, 104, 103, 103]), []);
 });

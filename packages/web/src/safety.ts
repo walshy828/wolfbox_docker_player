@@ -9,6 +9,8 @@ import type { HarshEvent } from '@wolfbox/telemetry';
  * gives enough lead-in to actually see the brake happen, not just its result.
  */
 export const BRAKE_LEAD_MS = 10_000;
+/** A turn is visible on the approach; a few seconds is enough to see the entry. */
+export const CORNER_LEAD_MS = 4_000;
 
 /**
  * Where to seek the player to see a harsh event unfold, not just its aftermath.
@@ -22,6 +24,7 @@ export const BRAKE_LEAD_MS = 10_000;
  * player has to show, which `seek()` silently ignores.
  */
 export function seekTargetMs(event: HarshEvent, earliestMs?: number): number {
-  const target = event.kind === 'braking' ? event.startMs - BRAKE_LEAD_MS : event.startMs;
+  const lead = event.kind === 'braking' ? BRAKE_LEAD_MS : event.kind === 'cornering' ? CORNER_LEAD_MS : 0;
+  const target = event.startMs - lead;
   return earliestMs === undefined ? target : Math.max(earliestMs, target);
 }

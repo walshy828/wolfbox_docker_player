@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { assessRisk } from '@wolfbox/telemetry';
 import {
   pickCard, partitionTrips, directoryPickerBlocker, ensureWritable, removeClipsFromCard,
   type Card, type CardClip, type CardTrip,
@@ -14,6 +15,7 @@ import { TripList, type TripFilter, type TripSort } from './components/TripList.
 import { RouteMap } from './components/RouteMap.tsx';
 import { DualPlayer } from './components/DualPlayer.tsx';
 import { ClipStrip } from './components/ClipStrip.tsx';
+import { DriveTimeline } from './components/DriveTimeline.tsx';
 import { SummaryPanel } from './components/SummaryPanel.tsx';
 import { AdherencePanel } from './components/AdherencePanel.tsx';
 import { SafetyPanel } from './components/SafetyPanel.tsx';
@@ -30,6 +32,15 @@ import {
   type TimeContext,
 } from './time.ts';
 import type { Theme } from './speedScale.ts';
+
+type CameraLayout = 'split' | 'pip' | 'front' | 'rear';
+
+const LAYOUT_LABEL: Record<CameraLayout, [string, string]> = {
+  split: ['Both', 'Front and rear side by side'],
+  pip: ['PiP', 'Front, with the rear camera inset'],
+  front: ['Front', 'Front camera only'],
+  rear: ['Rear', 'Rear camera only'],
+};
 
 /** Which panel, if any, is filling the window. */
 type Expanded = 'video' | 'map' | null;
@@ -51,7 +62,7 @@ export function App() {
   >(null);
   const seekToken = useRef(0);
   const [mode, setMode] = useState<PlaybackMode | null>(null);
-  const [layout, setLayout] = useState<'split' | 'front' | 'rear'>('split');
+  const [layout, setLayout] = useState<CameraLayout>('split');
   const [filter, setFilter] = useState<TripFilter>('drives');
   const [sort, setSort] = useState<TripSort>('newest');
   const [expanded, setExpanded] = useState<Expanded>(null);
@@ -250,6 +261,13 @@ export function App() {
 
   const roadLimit = track ? currentLimit(track.points, limits?.adherence, atMs) : undefined;
 
+  // The same function the trip list scores with, so the ring in the list and
+  // the gauge on the drive can only differ while limits are still loading.
+  const risk = useMemo(
+    () => (track?.summary ? assessRisk({ summary: track.summary, adherence: limits?.adherence }) : null),
+    [track, limits],
+  );
+
   const blocker = directoryPickerBlocker();
   const drift = describeCameraDrift(card?.cameraUtcOffsetMs);
 
@@ -325,14 +343,15 @@ export function App() {
               </h2>
               {trip && (
                 <div className="layout-controls" role="group" aria-label="Camera layout">
-                  {(['split', 'front', 'rear'] as const).map((option) => (
+                  {(Object.keys(LAYOUT_LABEL) as CameraLayout[]).map((option) => (
                     <button
                       key={option}
                       className={layout === option ? 'chip selected' : 'chip'}
                       onClick={() => setLayout(option)}
                       aria-pressed={layout === option}
+                      title={LAYOUT_LABEL[option][1]}
                     >
-                      {option === 'split' ? 'Both' : option === 'front' ? 'Front' : 'Rear'}
+                      {LAYOUT_LABEL[option][0]}
                     </button>
                   ))}
                 </div>
@@ -394,6 +413,17 @@ export function App() {
               />
             )}
 
+            {track && track.points.length > 1 && (
+              <DriveTimeline
+                points={track.points}
+                events={track.summary?.harshEvents ?? []}
+                stretches={limits?.adherence.stretches ?? []}
+                limitKph={limits?.adherence.limitKph}
+                cursorMs={clockMs} time={time} onSeek={seek}
+                onHighlight={onHighlight} selectedKey={highlight?.key}
+              />
+            )}
+
             <div className="workspace-scroll">
               {progress && (
                 <p className="notice">
@@ -403,7 +433,7 @@ export function App() {
               {track?.summary && (
                 <SummaryPanel
                   summary={track.summary} theme={theme} time={time}
-                  limitStatus={limitStatus} adherence={limits?.adherence}
+                  limitStatus={limitStatus} risk={risk}
                 />
               )}
               {trip && (

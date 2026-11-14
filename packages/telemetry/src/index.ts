@@ -36,10 +36,14 @@ export {
 export type { HarshKind, HarshSeverity, HarshEvent } from './harshEvents.ts';
 export {
   detectHarshEvents, HARSH_DELTA_KPH, SEVERE_DELTA_KPH, MERGE_GAP_SAMPLES, MAX_RELIABLE_GAP_SEC,
+  MAX_PLAUSIBLE_DELTA_KPH,
 } from './harshEvents.ts';
 export type { AccelG } from './accel.ts';
 export {
   longitudinalGAt, lateralGAt, COUNTS_PER_G, REST_BASELINE, MODERATE_G, SEVERE_G,
 } from './accel.ts';
-export type { DriveScoreInput, DriveScore, DriveScoreBand } from './driveScore.ts';
-export { computeDriveScore, bandFor } from './driveScore.ts';
+export { detectCornering, gpsLateralGAt, CORNER_MIN_KPH, CORNER_MODERATE_G, CORNER_SEVERE_G } from './cornering.ts';
+export type {
+  DriveRisk, RiskBand, RiskFactor, RiskFactorKey, RiskInput, SpeedingStats, FactorSeverity,
+} from './risk.ts';
+export { assessRisk, speedingStats, bandFor, formatDuration, MIN_RISK_MILES, MIN_EXPOSURE_MILES } from './risk.ts';

@@ -87,24 +87,36 @@ async function fetchTiles(tiles: Tile[], signal?: AbortSignal): Promise<RoadWay[
 }
 
 /**
- * Fetches the road data for a route without scoring it.
+ * Looks up the roads under a route and scores the drive against their limits.
  *
- * Exposed for callers that need the raw ways for their own matching pass --
- * currently the trip list's lazy per-row adherence lookup -- while still
- * going through the same tile cache as `useTripLimits`, so a trip already
- * scored once (in the list or the open drive) never re-fetches its tiles.
+ * The one path every adherence figure goes through -- the open drive's panel
+ * and the background pass that scores the trip list -- so the two can never
+ * disagree, and so tiles fetched for one are reused by the other. Null when no
+ * road data could be had for the route at all.
  */
-export async function loadRoadWays(points: { latitude: number; longitude: number }[], signal?: AbortSignal) {
-  return fetchTiles(tilesForRoute(points), signal);
+export async function computeAdherence(
+  points: CleanPoint[],
+  signal?: AbortSignal,
+): Promise<{ adherence: TripAdherence; tilesResolved: number; tilesWanted: number } | null> {
+  if (points.length === 0) return null;
+  const tiles = tilesForRoute(points);
+  const ways = await fetchTiles(tiles, signal);
+  if (ways.length === 0) return null;
+  const region = inferRegion(ways.map((way) => way.tags), points[0]);
+  const matches = matchRoads(points, ways);
+  return {
+    adherence: assessAdherence(points, matches, ways, region),
+    tilesResolved: tiles.filter((tile) => cached.has(tileKey(tile))).length,
+    tilesWanted: Math.min(tiles.length, MAX_TILES),
+  };
 }
 
 /**
- * Scores one trip against the speed limits of the roads it was driven on.
+ * Scores the open trip against the speed limits of the roads it was driven on.
  *
- * `enabled` gates the network call so the lookup only happens when the panel
- * showing it is actually open. That keeps a user browsing thirty trips from
- * sending thirty queries to a service run on donated hardware, and it means
- * route data leaves the machine only when the feature is being used.
+ * `enabled` gates the network call. The trip list scores every drive in the
+ * background too (see `useTripStats`), through the same tile cache, so opening
+ * a drive the list has already reached costs no further lookups.
  */
 export function useTripLimits(track: TripTrack | null, enabled: boolean): {
   status: LimitStatus;
@@ -121,23 +133,17 @@ export function useTripLimits(track: TripTrack | null, enabled: boolean): {
 
     void (async () => {
       try {
-        const tiles = tilesForRoute(track.points);
-        const ways = await fetchTiles(tiles, controller.signal);
+        const result = await computeAdherence(track.points, controller.signal);
         if (controller.signal.aborted) return;
-
-        if (ways.length === 0) { setState({ status: 'unavailable' }); return; }
-
-        const region = inferRegion(ways.map((way) => way.tags), track.points[0]);
-        const matches = matchRoads(track.points, ways);
-        const adherence = assessAdherence(track.points, matches, ways, region);
-
+        if (!result) { setState({ status: 'unavailable' }); return; }
+        const { adherence, tilesResolved, tilesWanted } = result;
         setState({
           status: 'ready',
           limits: {
             adherence,
             excessMph: adherence.excessKph.map((kph) => kph === undefined ? undefined : kphToMph(kph)),
-            tilesResolved: tiles.filter((tile) => cached.has(tileKey(tile))).length,
-            tilesWanted: Math.min(tiles.length, MAX_TILES),
+            tilesResolved,
+            tilesWanted,
           },
         });
       } catch {

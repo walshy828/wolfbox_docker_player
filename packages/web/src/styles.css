@@ -240,37 +240,45 @@ button.link {
 }
 .trip:hover { background: var(--surface-sunken); }
 .trip.selected { background: var(--surface-sunken); border-color: var(--accent); }
+.trip { grid-template-columns: 36px minmax(0, 1fr); column-gap: 10px; align-items: start; padding: 8px; }
+.trip-body { display: grid; gap: 2px; min-width: 0; }
 .trip-when { font-weight: 600; font-size: 14px; display: inline-flex; align-items: center; gap: 5px; }
-.harsh-badge {
-  display: inline-flex; align-items: center; gap: 2px;
-  font-size: 11px; font-weight: 600;
+
+/* Risk ring: the list's one headline figure. Dashed while speed limits are
+   still loading, so a provisional score never reads as a final one. */
+.risk-ring { display: block; width: 36px; height: 36px; }
+.risk-ring-track { fill: none; stroke: var(--surface-sunken); stroke-width: 3.5; }
+.risk-ring-value { fill: none; stroke-width: 3.5; stroke-linecap: round; }
+.risk-ring text { font-size: 12px; font-weight: 700; fill: var(--ink); font-variant-numeric: tabular-nums; }
+.risk-ring--low .risk-ring-value { stroke: var(--ok); }
+.risk-ring--moderate .risk-ring-value { stroke: var(--warn); }
+.risk-ring--high .risk-ring-value { stroke: var(--danger); }
+.risk-ring--provisional .risk-ring-value { stroke-dasharray: 3 3 !important; stroke-dashoffset: 0 !important; opacity: 0.7; }
+.risk-ring--pending, .risk-ring--none {
+  border-radius: 50%; border: 3.5px solid var(--surface-sunken);
 }
-.harsh-badge--moderate { color: var(--warn); }
-.harsh-badge--severe { color: var(--danger); }
-.score-badge {
-  display: inline-flex; align-items: center; justify-content: center;
-  min-width: 22px; padding: 1px 5px;
-  font-size: 11px; font-weight: 700; line-height: 1.4;
-  border-radius: 999px; border: 1px solid currentColor;
+.risk-ring--pending { animation: ring-pulse 1.4s ease-in-out infinite; }
+@keyframes ring-pulse { 50% { opacity: 0.4; } }
+
+.trip-figures {
+  display: flex; flex-wrap: wrap; column-gap: 8px;
+  font-size: 12px; color: var(--ink-secondary); font-variant-numeric: tabular-nums;
 }
-.score-badge--good { color: var(--ok); }
-.score-badge--fair { color: var(--warn); }
-.score-badge--poor { color: var(--danger); }
-.adherence-badge {
-  font-size: 11px; font-weight: 600; color: var(--ink-secondary);
-  white-space: nowrap;
-}
-.trip-meta { font-size: 12px; color: var(--ink-muted); display: flex; gap: 6px; align-items: center; }
-.trip-stats {
-  display: block; font-size: 12px; color: var(--ink-secondary); margin-top: 1px;
-}
-.top-speed--severe { color: var(--danger); font-weight: 700; }
-.top-speed--moderate { color: var(--warn); font-weight: 700; }
-.trip-stats--pending { color: var(--ink-muted); font-style: italic; }
+.trip-figures--pending { color: var(--ink-muted); font-style: italic; }
+.trip-figures-over { color: var(--danger); font-weight: 600; }
 .trip-route {
-  display: block; color: var(--ink-muted);
+  display: block; font-size: 12px; color: var(--ink-muted);
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
+.reasons { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 3px; }
+.reason {
+  font-size: 11px; font-weight: 600; line-height: 1.5; padding: 0 7px;
+  border-radius: 999px; white-space: nowrap;
+  color: var(--ink-secondary); background: var(--surface-sunken);
+}
+.reason--moderate { color: var(--warn); background: color-mix(in srgb, var(--warn) 12%, transparent); }
+.reason--severe { color: var(--danger); background: color-mix(in srgb, var(--danger) 12%, transparent); }
+.reason--clean { color: var(--ok); background: color-mix(in srgb, var(--ok) 12%, transparent); }
 
 .workspace { background: var(--surface); }
 /* The player is a capped row that never grows past a share of the viewport;
@@ -296,6 +304,17 @@ button.link {
   flex: 1; min-height: 0; grid-template-rows: minmax(0, 1fr);
 }
 .player-grid--front, .player-grid--rear { grid-template-columns: 1fr; }
+/* Picture in picture: the front camera fills the stage and the rear sits in
+   the top corner, clear of the transport bar along the bottom. */
+.player-grid--pip { grid-template-columns: 1fr; position: relative; }
+.player-grid--pip > .pane + .pane {
+  position: absolute; top: 10px; right: 10px; width: 28%; z-index: 1;
+  grid-template-rows: auto; pointer-events: none;
+}
+.player-grid--pip > .pane + .pane video {
+  border: 1px solid rgb(255 255 255 / 0.5); box-shadow: 0 6px 20px rgb(0 0 0 / 0.45);
+}
+.player-grid--pip > .pane + .pane figcaption { display: none; }
 .pane { margin: 0; display: grid; gap: 4px; min-height: 0; grid-template-rows: minmax(0, 1fr) auto; }
 /* Single-camera layouts hide the other pane rather than unmounting it, so the
    front element keeps driving the clock and the roll into the next clip. */
@@ -428,16 +447,16 @@ button.link {
 .score-hero { display: flex; align-items: center; gap: 16px; }
 .score-gauge-track { fill: none; stroke: var(--surface-sunken); stroke-width: 8; }
 .score-gauge-value { fill: none; stroke-width: 8; stroke-linecap: round; transition: stroke-dashoffset 0.4s ease; }
-.score-gauge--good .score-gauge-value { stroke: var(--ok); }
-.score-gauge--fair .score-gauge-value { stroke: var(--warn); }
-.score-gauge--poor .score-gauge-value { stroke: var(--danger); }
+.score-gauge--low .score-gauge-value { stroke: var(--ok); }
+.score-gauge--moderate .score-gauge-value { stroke: var(--warn); }
+.score-gauge--high .score-gauge-value { stroke: var(--danger); }
 .score-gauge-number { font-size: 26px; font-weight: 700; fill: var(--ink); font-variant-numeric: tabular-nums; }
 .score-gauge-suffix { font-size: 11px; fill: var(--ink-muted); }
 .score-hero-text { display: grid; gap: 4px; }
 .score-hero-band { font-size: 16px; }
-.score-hero-band--good { color: var(--ok); }
-.score-hero-band--fair { color: var(--warn); }
-.score-hero-band--poor { color: var(--danger); }
+.score-hero-band--low { color: var(--ok); }
+.score-hero-band--moderate { color: var(--warn); }
+.score-hero-band--high { color: var(--danger); }
 
 .issue-grid {
   display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: 8px;
@@ -749,3 +768,67 @@ button.danger:hover:not(:disabled) { background: var(--danger); color: var(--acc
     45deg, transparent 0 2px, rgba(255, 255, 255, 0.55) 2px 4px
   );
 }
+
+/* --- risk factors ---------------------------------------------------- */
+.factors { list-style: none; margin: 0; padding: 0; display: grid; gap: 4px; }
+.factor {
+  display: grid; grid-template-columns: minmax(0, 1fr) auto; column-gap: 10px;
+  padding: 6px 10px; border-radius: 8px; background: var(--surface-sunken);
+  border-left: 3px solid var(--ink-muted);
+}
+.factor--moderate { border-left-color: var(--warn); }
+.factor--severe { border-left-color: var(--danger); }
+.factor-label { font-weight: 600; font-size: 13px; }
+.factor-detail { grid-column: 1; font-size: 12px; color: var(--ink-muted); }
+.factor-points {
+  grid-column: 2; grid-row: 1 / span 2; align-self: center;
+  font-weight: 700; font-variant-numeric: tabular-nums; color: var(--ink-secondary);
+}
+
+/* --- drive timeline -------------------------------------------------- */
+.timeline { padding: 6px 12px 8px; display: grid; gap: 4px; border-bottom: 1px solid var(--border); }
+.timeline-head { display: flex; align-items: center; gap: 10px; font-size: 12px; }
+.timeline-title { font-weight: 600; }
+.timeline-legend { display: flex; gap: 10px; color: var(--ink-muted); }
+.timeline-key::before {
+  content: ''; display: inline-block; width: 10px; height: 3px; margin-right: 4px;
+  vertical-align: middle; border-radius: 2px;
+}
+.timeline-key--speed::before { background: var(--accent); }
+.timeline-key--limit::before { background: var(--ink-secondary); }
+.timeline-key--over::before { background: var(--danger); height: 8px; opacity: 0.4; }
+.timeline-nav { display: flex; gap: 4px; }
+.timeline-track {
+  position: relative; height: 56px; cursor: pointer;
+  background: var(--surface-sunken); border-radius: 6px; overflow: visible;
+}
+.timeline-track svg { position: absolute; inset: 0; width: 100%; height: 100%; border-radius: 6px; }
+.timeline-speed { fill: color-mix(in srgb, var(--accent) 28%, transparent); stroke: var(--accent); stroke-width: 1; vector-effect: non-scaling-stroke; }
+.timeline-limit { fill: none; stroke: var(--ink-secondary); stroke-width: 1.5; stroke-dasharray: 4 3; vector-effect: non-scaling-stroke; }
+.timeline-over { fill: var(--danger); opacity: 0.16; }
+.timeline-over--moderate { opacity: 0.26; }
+.timeline-over--severe { opacity: 0.4; }
+.timeline-mark {
+  position: absolute; top: -5px; width: 12px; height: 12px; padding: 0; margin-left: -6px;
+  border-radius: 50%; border: 2px solid var(--surface-raised);
+  background: var(--warn); z-index: 2; cursor: pointer;
+}
+.timeline-mark--severe { background: var(--danger); }
+.timeline-mark--speeding { border-radius: 2px; top: auto; bottom: -5px; background: var(--danger); }
+.timeline-mark--speeding.timeline-mark--minor { background: var(--ink-muted); }
+.timeline-mark--cornering { border-radius: 2px; transform: rotate(45deg); }
+.timeline-mark:hover, .timeline-mark.selected { outline: 2px solid var(--accent); outline-offset: 1px; }
+.timeline-playhead {
+  position: absolute; top: -3px; bottom: -3px; width: 2px; margin-left: -1px;
+  background: var(--ink); border-radius: 1px; pointer-events: none; z-index: 1;
+}
+.timeline-hover {
+  position: absolute; top: 0; bottom: 0; width: 1px; background: var(--ink-muted);
+  pointer-events: none; z-index: 3;
+}
+.timeline-tip {
+  position: absolute; bottom: calc(100% + 8px); left: 50%; transform: translateX(-50%);
+  white-space: nowrap; font-size: 11px; padding: 2px 6px; border-radius: 4px;
+  background: var(--ink); color: var(--surface); font-variant-numeric: tabular-nums;
+}
+.timeline-axis { display: flex; justify-content: space-between; font-size: 11px; color: var(--ink-muted); }

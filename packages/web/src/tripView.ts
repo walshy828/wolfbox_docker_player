@@ -1,7 +1,7 @@
 import type { CardTrip } from './card.ts';
 
 export type TripFilter = 'all' | 'drives' | 'events';
-export type TripSort = 'newest' | 'oldest' | 'longest';
+export type TripSort = 'newest' | 'oldest' | 'longest' | 'riskiest';
 
 export const tripDurationMs = (trip: CardTrip) => trip.endLocalMs - trip.startLocalMs;
 
@@ -17,6 +17,8 @@ export function selectTrips(
   events: CardTrip[],
   filter: TripFilter,
   sort: TripSort,
+  /** A trip's risk score, 0-100 with lower riskier, once known. Needed for 'riskiest'. */
+  scoreOf: (trip: CardTrip) => number | undefined = () => undefined,
 ): CardTrip[] {
   const chosen =
     filter === 'drives' ? drives :
@@ -27,6 +29,12 @@ export function selectTrips(
   switch (sort) {
     case 'oldest':
       ordered.sort((a, b) => a.startLocalMs - b.startLocalMs);
+      break;
+    case 'riskiest':
+      // Unscored trips -- still reading, or too short to judge -- go last, so
+      // the top of the list is always something that has been judged risky.
+      ordered.sort((a, b) =>
+        (scoreOf(a) ?? Infinity) - (scoreOf(b) ?? Infinity) || b.startLocalMs - a.startLocalMs);
       break;
     case 'longest':
       ordered.sort((a, b) => tripDurationMs(b) - tripDurationMs(a));

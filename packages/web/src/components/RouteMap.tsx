@@ -22,7 +22,7 @@ interface Props {
    * cannot be mistaken for compliant driving.
    */
   excessMph?: (number | undefined)[];
-  /** Hard-braking/acceleration events, marked on the route at their peak moment. */
+  /** Hard braking, acceleration and cornering, marked on the route at their peak moment. */
   events?: HarshEvent[];
   /**
    * The event or stretch currently selected in the Safety/Adherence panel, so
@@ -229,7 +229,9 @@ export function RouteMap({
         radius: 5, color: '#ffffff', weight: 1.5,
         fillColor: EVENT_MARKER_COLOR[event.severity], fillOpacity: 0.95,
       })
-        .bindTooltip(event.kind === 'braking' ? 'Hard braking' : 'Hard acceleration')
+        .bindTooltip(event.kind === 'braking' ? 'Hard braking'
+          : event.kind === 'acceleration' ? 'Hard acceleration'
+          : `Sharp turn ${event.direction ?? ''}`.trim())
         .on('click', (e) => {
           L.DomEvent.stopPropagation(e);
           onSeek(seekTargetMs(event, track[0]!.point.timestampMs));

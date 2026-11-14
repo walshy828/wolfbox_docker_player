@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import {
-  kphToMph, computeDriveScore, type DriveScoreBand, type TripSummary, type TripAdherence,
+  formatDuration, kphToMph, type DriveRisk, type RiskBand, type TripSummary,
 } from '@wolfbox/telemetry';
 import { SPEED_BANDS, colorForBand, type Theme } from '../speedScale.ts';
 import { CollapsibleSection } from './CollapsibleSection.tsx';
@@ -16,8 +16,8 @@ function duration(seconds: number): string {
   return h > 0 ? `${h}h ${m}m` : m > 0 ? `${m}m ${s}s` : `${s}s`;
 }
 
-const BAND_LABEL: Record<DriveScoreBand, string> = {
-  good: 'Good drive', fair: 'Fair drive', poor: 'Rough drive',
+const BAND_LABEL: Record<RiskBand, string> = {
+  low: 'Low risk', moderate: 'Some risk', high: 'High risk',
 };
 
 /** Circumference of the gauge ring, at r=40. */
@@ -27,7 +27,7 @@ const GAUGE_CIRCUMFERENCE = 2 * Math.PI * 40;
  * The drive score as a ring gauge, so the single headline figure this panel
  * leads with reads at a glance rather than as one more number in a table.
  */
-function ScoreGauge({ value, band }: { value: number; band: DriveScoreBand }) {
+function ScoreGauge({ value, band }: { value: number; band: RiskBand }) {
   const offset = GAUGE_CIRCUMFERENCE * (1 - value / 100);
   return (
     <svg className={`score-gauge score-gauge--${band}`} viewBox="0 0 100 100" width="88" height="88">
@@ -60,11 +60,9 @@ function IssueTile(
 /**
  * Trip metrics, plus how the drive's time was spent across the speed bands.
  *
- * Leads with the drive score as a gauge and a grid of the figures that feed
- * or explain it -- speed-limit adherence and the harsh-event counts, broken
- * out by severity and by braking versus acceleration -- so a parent can see
- * at a glance whether a drive is worth a closer look before reading a single
- * number in the tables below.
+ * Leads with the risk score and the factors it was built from, each with the
+ * points it cost, so the number is never the end of the explanation. Below
+ * that, the speeding and event figures a parent will want to quote.
  *
  * The histogram shares the route line's colours so the two read as one system:
  * a band that is mostly orange on the map is the orange bar here. Every bar is
@@ -72,12 +70,12 @@ function IssueTile(
  * colour ramp stay legible without relying on colour alone.
  */
 export function SummaryPanel(
-  { summary, theme, time, limitStatus, adherence }: {
+  { summary, theme, time, limitStatus, risk }: {
     summary: TripSummary;
     theme: Theme;
     time: TimeContext;
     limitStatus: LimitStatus;
-    adherence?: TripAdherence;
+    risk: DriveRisk | null;
   },
 ) {
   const clock = (ms: number) => formatAbsolute(ms, time, { hour: 'numeric', minute: '2-digit' });
@@ -86,36 +84,47 @@ export function SummaryPanel(
   const peak = Math.max(...buckets.map((b) => b.seconds), 1);
   const totalBucketed = buckets.reduce((sum, b) => sum + b.seconds, 0);
 
-  const adherenceScore = adherence ? adherence.score ?? adherence.scoreWithInferred : undefined;
-  const score = computeDriveScore({
-    harshEvents: summary.harshEvents,
-    distanceMeters: summary.distanceMeters,
-    adherenceScore,
-  });
-
-  const brakingModerate = summary.harshEvents.filter((e) => e.kind === 'braking' && e.severity === 'moderate').length;
-  const brakingSevere = summary.harshEvents.filter((e) => e.kind === 'braking' && e.severity === 'severe').length;
-  const accelModerate = summary.harshEvents.filter((e) => e.kind === 'acceleration' && e.severity === 'moderate').length;
-  const accelSevere = summary.harshEvents.filter((e) => e.kind === 'acceleration' && e.severity === 'severe').length;
-
-  const stretchesModerate = adherence?.stretches.filter((s) => s.severity === 'moderate').length ?? 0;
-  const stretchesSevere = adherence?.stretches.filter((s) => s.severity === 'severe').length ?? 0;
-
-  const adherenceTile = (() => {
-    if (limitStatus === 'loading') {
-      return <IssueTile label="Speed limit adherence" value="…" detail="Checking limits" tone="muted" />;
-    }
-    if (limitStatus === 'unavailable' || !adherence || adherenceScore == null) {
-      return <IssueTile label="Speed limit adherence" value="—" detail="Not available" tone="muted" />;
-    }
-    const pct = Math.round(adherenceScore * 100);
-    const tone = pct >= 90 ? 'ok' : pct >= 75 ? 'warn' : 'danger';
+  const count = (kind: string) => summary.harshEvents.filter((e) => e.kind === kind).length;
+  const severeOf = (kind: string) =>
+    summary.harshEvents.filter((e) => e.kind === kind && e.severity === 'severe').length;
+  const eventTile = (kind: string, label: string) => {
+    const n = count(kind);
+    const severe = severeOf(kind);
     return (
       <IssueTile
-        label="Speed limit adherence" value={`${pct}%`}
-        detail={`${stretchesModerate + stretchesSevere} stretch${stretchesModerate + stretchesSevere === 1 ? '' : 'es'} over`}
-        tone={tone}
+        label={label} value={String(n)}
+        detail={severe > 0 ? `${severe} severe` : undefined}
+        tone={severe > 0 ? 'danger' : n > 0 ? 'warn' : 'ok'}
       />
+    );
+  };
+
+  const speeding = risk?.speeding;
+  const speedingTiles = (() => {
+    if (limitStatus === 'loading') {
+      return <IssueTile label="Over the limit" value="…" detail="Checking limits" tone="muted" />;
+    }
+    if (!speeding) {
+      return <IssueTile label="Over the limit" value="—" detail="Limits not available" tone="muted" />;
+    }
+    const peakMph = Math.round(kphToMph(speeding.peakExcessKph));
+    return (
+      <>
+        <IssueTile
+          label="Over the limit" value={formatDuration(speeding.stretchSec)}
+          detail={`${speeding.stretchCount} stretch${speeding.stretchCount === 1 ? '' : 'es'}${speeding.assumed ? ' · some limits assumed' : ''}`}
+          tone={speeding.bySeverity.severe > 0 ? 'danger' : speeding.stretchCount > 0 ? 'warn' : 'ok'}
+        />
+        <IssueTile
+          label="Longest stretch" value={speeding.stretchCount ? formatDuration(speeding.longestSec) : '—'}
+          tone={speeding.longestSec >= 60 ? 'warn' : speeding.stretchCount ? 'muted' : 'ok'}
+        />
+        <IssueTile
+          label="Most over" value={speeding.stretchCount ? `+${peakMph}` : '—'}
+          detail={speeding.peakRoad}
+          tone={peakMph >= 20 ? 'danger' : peakMph >= 10 ? 'warn' : speeding.stretchCount ? 'muted' : 'ok'}
+        />
+      </>
     );
   })();
 
@@ -123,17 +132,20 @@ export function SummaryPanel(
     <section className="summary">
       <CollapsibleSection title="Drive summary">
         <div className="score-hero">
-          <ScoreGauge value={score?.value ?? 0} band={score?.band ?? 'fair'} />
+          <ScoreGauge value={risk?.score ?? 0} band={risk?.band ?? 'moderate'} />
           <div className="score-hero-text">
-            {score ? (
+            {risk ? (
               <>
-                <strong className={`score-hero-band score-hero-band--${score.band}`}>
-                  {BAND_LABEL[score.band]}
+                <strong className={`score-hero-band score-hero-band--${risk.band}`}>
+                  {BAND_LABEL[risk.band]}
                 </strong>
                 <span className="muted">
-                  {score.includesAdherence
-                    ? 'Based on braking, acceleration and speed-limit adherence.'
-                    : 'Based on braking and acceleration; speed limits not yet counted.'}
+                  {risk.includesSpeeding
+                    ? 'Speeding, braking, acceleration, cornering and top speed.'
+                    : limitStatus === 'loading'
+                      ? 'Speed limits still loading; speeding not yet counted.'
+                      : 'Speed limits unavailable; speeding not counted.'}
+                  {risk.cappedBy && ` Capped for ${risk.cappedBy}.`}
                 </span>
               </>
             ) : (
@@ -142,25 +154,23 @@ export function SummaryPanel(
           </div>
         </div>
 
-        <div className="issue-grid">
-          {adherenceTile}
-          <IssueTile
-            label="Moderate events" value={String(stretchesModerate + brakingModerate + accelModerate)}
-            detail="Speeding + harsh events"
-            tone={stretchesModerate + brakingModerate + accelModerate > 0 ? 'warn' : 'ok'}
-          />
-          <IssueTile
-            label="Severe events" value={String(stretchesSevere + brakingSevere + accelSevere)}
-            detail="Speeding + harsh events"
-            tone={stretchesSevere + brakingSevere + accelSevere > 0 ? 'danger' : 'ok'}
-          />
-        </div>
+        {risk && risk.factors.length > 0 && (
+          <ul className="factors">
+            {risk.factors.map((factor) => (
+              <li key={factor.key} className={`factor factor--${factor.severity}`}>
+                <span className="factor-label">{factor.label}</span>
+                {factor.detail && <span className="factor-detail">{factor.detail}</span>}
+                <span className="factor-points">&minus;{Math.round(factor.points)}</span>
+              </li>
+            ))}
+          </ul>
+        )}
 
+        <div className="issue-grid">{speedingTiles}</div>
         <div className="issue-grid issue-grid--harsh">
-          <IssueTile label="Moderate braking" value={String(brakingModerate)} tone={brakingModerate > 0 ? 'warn' : 'ok'} />
-          <IssueTile label="Severe braking" value={String(brakingSevere)} tone={brakingSevere > 0 ? 'danger' : 'ok'} />
-          <IssueTile label="Moderate acceleration" value={String(accelModerate)} tone={accelModerate > 0 ? 'warn' : 'ok'} />
-          <IssueTile label="Severe acceleration" value={String(accelSevere)} tone={accelSevere > 0 ? 'danger' : 'ok'} />
+          {eventTile('braking', 'Hard stops')}
+          {eventTile('acceleration', 'Hard launches')}
+          {eventTile('cornering', 'Sharp turns')}
         </div>
 
         <dl className="stats">
@@ -169,7 +179,7 @@ export function SummaryPanel(
           <div><dt>Moving</dt><dd>{duration(summary.movingSec)}</dd></div>
           <div><dt>Avg moving</dt><dd>{kphToMph(summary.averageMovingSpeedKph).toFixed(0)} <small>mph</small></dd></div>
           <div><dt>Top speed</dt><dd>{kphToMph(summary.maxSpeedKph).toFixed(0)} <small>mph</small></dd></div>
-          <div><dt>Harsh events</dt><dd>{summary.harshEvents.length}</dd></div>
+          <div><dt>Time 80+</dt><dd>{formatDuration(summary.histogramMph.at(-1) ?? 0)}</dd></div>
         </dl>
 
         <div className="chart-head">

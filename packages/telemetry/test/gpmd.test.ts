@@ -286,3 +286,29 @@ describe('anchoring a real clip that starts without a fix', { skip: existsSync(C
     }
   });
 });
+
+// On this clip the firmware writes one heading at a scale of 1000 instead of
+// 100 (raw 9100 meaning 9.1 degrees). Read at a fixed /100 it came out as 91
+// degrees in the middle of a northbound stretch -- or, on other clips, as 901.
+const HEADING_SCALE_CLIP = `${CARD}/front_norm/2026_10_11_135913_00.MP4`;
+describe('heading scale', {
+  skip: existsSync(HEADING_SCALE_CLIP) ? false : `clip not on card (${HEADING_SCALE_CLIP})`,
+}, () => {
+  test('honours the per-sample scale factor', async () => {
+    const reader = await fileReader(HEADING_SCALE_CLIP);
+    try {
+      const points = cleanTrack(await readTelemetry(reader));
+      for (const p of points) assert.ok(p.headingDeg >= 0 && p.headingDeg < 360, `heading ${p.headingDeg}`);
+      // No moving sample may disagree with both neighbours by more than a
+      // car can turn in a second at speed.
+      for (let i = 1; i < points.length - 1; i++) {
+        const [a, b, c] = [points[i - 1]!, points[i]!, points[i + 1]!];
+        if (b.smoothedSpeedKph < 30) continue;
+        const d = (x: number, y: number) => Math.abs(((x - y + 540) % 360) - 180);
+        const neighbours = d(a.headingDeg, c.headingDeg);
+        assert.ok(!(d(a.headingDeg, b.headingDeg) > 30 && d(b.headingDeg, c.headingDeg) > 30 && neighbours < 10),
+          `heading spike at sample ${i}: ${a.headingDeg} ${b.headingDeg} ${c.headingDeg}`);
+      }
+    } finally { await reader.close(); }
+  });
+});

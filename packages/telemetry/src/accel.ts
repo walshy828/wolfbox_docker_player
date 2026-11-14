@@ -1,5 +1,6 @@
 import type { CleanPoint } from './clean.ts';
-import { HARSH_DELTA_KPH, SEVERE_DELTA_KPH, MAX_RELIABLE_GAP_SEC } from './harshEvents.ts';
+import { gpsLateralGAt, CORNER_MIN_KPH } from './cornering.ts';
+import { HARSH_DELTA_KPH, SEVERE_DELTA_KPH, MAX_RELIABLE_GAP_SEC, MAX_PLAUSIBLE_DELTA_KPH } from './harshEvents.ts';
 
 /**
  * G-forces for a live meter: braking/acceleration and lateral/cornering.
@@ -18,12 +19,10 @@ import { HARSH_DELTA_KPH, SEVERE_DELTA_KPH, MAX_RELIABLE_GAP_SEC } from './harsh
  * moderate/severe thresholds land exactly on `HARSH_DELTA_KPH`/
  * `SEVERE_DELTA_KPH`.
  *
- * Lateral has no GPS-derived equivalent (GPS gives no independent cornering
- * signal at low speed), so it still comes from the raw accelerometer's Y
- * axis, using the same rest-magnitude calibration. Unlike X, Y was never
- * independently validated against a ground truth -- there is no equivalent
- * of harsh-braking events to check it against -- so it is presented as an
- * estimate, not a validated measurement.
+ * Lateral comes from GPS too: speed times the rate heading changes (see
+ * cornering.ts). Only below the speed where heading is trustworthy does it
+ * fall back to the raw accelerometer's Y axis, which was never independently
+ * calibrated and is an estimate.
  */
 
 /** Raw accelerometer magnitude at rest, empirically measured on the reference card. 1g is this many counts. */
@@ -42,7 +41,7 @@ const KPH_PER_S_PER_G = 35.30394;
 export interface AccelG {
   /** Positive = accelerating, negative = braking. From the GPS speed delta, same signal as `detectHarshEvents`. */
   longitudinalG: number;
-  /** Positive = right, negative = left. From the raw accelerometer's Y axis -- an estimate, not independently validated. */
+  /** Positive = right, negative = left. From GPS speed x heading rate; see `lateralGAt`. */
   lateralG: number;
 }
 
@@ -58,13 +57,25 @@ export function longitudinalGAt(points: CleanPoint[], i: number): number {
   const seconds = (point.timestampMs - previous.timestampMs) / 1000;
   if (seconds <= 0 || seconds > MAX_RELIABLE_GAP_SEC) return 0;
   const deltaKph = (point.smoothedSpeedKph - previous.smoothedSpeedKph) / seconds;
+  if (Math.abs(deltaKph) > MAX_PLAUSIBLE_DELTA_KPH) return 0;
   return deltaKph / KPH_PER_S_PER_G;
 }
 
-/** Lateral g estimate at `points[i]`, from the raw accelerometer's Y axis. Not independently validated -- see the file doc comment. */
+/**
+ * Lateral g at `points[i]`, positive turning right.
+ *
+ * From GPS speed and heading (see `gpsLateralGAt`), the same signal cornering
+ * events are detected from, so the meter and the event list agree. Below the
+ * speed where heading is trustworthy it falls back to the raw accelerometer's
+ * Y axis, which tracks the GPS figure (r = 0.52, slope 0.75) but was never
+ * independently calibrated.
+ */
 export function lateralGAt(points: CleanPoint[], i: number): number {
   const point = points[i];
   if (!point) return 0;
+  if (point.smoothedSpeedKph >= CORNER_MIN_KPH && points[i - 1] && points[i + 1]) {
+    return gpsLateralGAt(points, i);
+  }
   return (point.accel.y - REST_BASELINE.y) / COUNTS_PER_G;
 }
 

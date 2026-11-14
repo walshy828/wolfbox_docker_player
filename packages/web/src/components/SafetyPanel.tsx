@@ -11,6 +11,7 @@ const VISIBLE_EVENTS = 8;
 const KIND_LABEL: Record<HarshEvent['kind'], string> = {
   braking: 'Hard braking',
   acceleration: 'Hard acceleration',
+  cornering: 'Sharp turn',
 };
 
 const SEVERITY_CLASS: Record<HarshEvent['severity'], string> = {
@@ -22,8 +23,8 @@ const SEVERITY_CLASS: Record<HarshEvent['severity'], string> = {
 const keyFor = (event: HarshEvent) => `${event.kind}-${event.startMs}`;
 
 /**
- * Moments of hard braking or hard acceleration, for a parent checking how a
- * drive actually felt rather than just how fast it was.
+ * Moments of hard braking, hard acceleration or sharp cornering, for a parent
+ * checking how a drive actually felt rather than just how fast it was.
  *
  * This reads GPS-derived speed change, not the camera's raw accelerometer --
  * that field's scale and axis orientation are uncalibrated, unlike GPS speed,
@@ -51,6 +52,7 @@ export function SafetyPanel({
 
   const braking = events.filter((e) => e.kind === 'braking').length;
   const acceleration = events.filter((e) => e.kind === 'acceleration').length;
+  const cornering = events.filter((e) => e.kind === 'cornering').length;
   const severe = events.filter((e) => e.severity === 'severe').length;
   const miles = metersToMiles(distanceMeters);
   const per100 = miles > 0.5 ? (events.length / miles) * 100 : null;
@@ -59,10 +61,11 @@ export function SafetyPanel({
 
   return (
     <section className="safety">
-      <CollapsibleSection title="Braking & acceleration" defaultOpen={false}>
+      <CollapsibleSection title="Braking, acceleration & cornering" defaultOpen={false}>
         <dl className="stats">
           <div><dt>Hard braking</dt><dd>{braking}</dd></div>
           <div><dt>Hard acceleration</dt><dd>{acceleration}</dd></div>
+          <div><dt>Sharp turns</dt><dd>{cornering}</dd></div>
           <div><dt>Severe</dt><dd>{severe}</dd></div>
           <div>
             <dt>Per 100 mi</dt>
@@ -72,7 +75,7 @@ export function SafetyPanel({
 
         {events.length === 0 ? (
           <p className="muted pad">
-            No hard braking or acceleration was detected on this drive.
+            No hard braking, acceleration or sharp turns were detected on this drive.
           </p>
         ) : (
           <>
@@ -122,10 +125,12 @@ function EventRow({
         {clock(event.startMs)}
       </button>
       <span className="stretch-what">
-        <strong>{KIND_LABEL[event.kind]}</strong>
+        <strong>{KIND_LABEL[event.kind]}{event.direction ? ` ${event.direction}` : ''}</strong>
       </span>
       <span className="stretch-for muted">
-        {Math.abs(Math.round(kphToMph(event.peakDeltaKph)))} mph/s
+        {event.kind === 'cornering'
+          ? `${Math.abs(event.peakG).toFixed(2)} g at ${Math.round(kphToMph(event.speedKph))} mph`
+          : `${Math.abs(Math.round(kphToMph(event.peakDeltaKph)))} mph/s`}
       </span>
       <span className={SEVERITY_CLASS[event.severity]}>{event.severity}</span>
     </li>
