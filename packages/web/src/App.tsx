@@ -22,6 +22,7 @@ import { ClipStrip } from './components/ClipStrip.tsx';
 import { DriveTimeline } from './components/DriveTimeline.tsx';
 import { DriveOverview } from './components/DriveOverview.tsx';
 import { ImportSheet } from './components/ImportSheet.tsx';
+import { HistoryView } from './components/HistoryView.tsx';
 import { ConfirmInline } from './components/ConfirmInline.tsx';
 import { SummaryPanel } from './components/SummaryPanel.tsx';
 import { AdherencePanel } from './components/AdherencePanel.tsx';
@@ -83,7 +84,7 @@ export function App() {
   const [sort, setSort] = useState<TripSort>('newest');
   /** The overview leads with the drives worth watching. */
   const [overviewSort, setOverviewSort] = useState<TripSort>('riskiest');
-  const [view, setView] = useState<'drives' | 'review'>('drives');
+  const [view, setView] = useState<'drives' | 'review' | 'history'>('drives');
   const [expanded, setExpanded] = useState<Expanded>(null);
   const [error, setError] = useState<string | null>(null);
   const [checkedIds, setCheckedIds] = useState<ReadonlySet<string>>(() => new Set());
@@ -370,9 +371,9 @@ export function App() {
           <BrandMark />
           <h1>WolfBox</h1>
         </div>
-        {hasSource && (
+        {(hasSource || archived.length > 0) && (
           <nav className="view-switch" aria-label="View">
-            {([['drives', 'Drives'], ['review', 'Review']] as const).map(([value, label]) => (
+            {([['drives', 'Drives'], ['review', 'Review'], ...(archiveOn ? [['history', 'History']] as const : [])] as const).map(([value, label]) => (
               <button
                 key={value}
                 className={view === value ? 'selected' : ''}
@@ -421,7 +422,21 @@ export function App() {
       {blocker && <p className="notice notice--error">{blocker}</p>}
       {error && <p className="notice notice--error">{error}</p>}
 
-      {!hasSource && !blocker && (
+      {view === 'history' && archiveOn && (
+        <main className="overview-scroll">
+          <HistoryView
+            trips={archived} drivers={drivers} time={time} theme={theme}
+            onOpen={(tripId) => {
+              const found = archivedById.get(tripId);
+              if (!found) return;
+              setSource('archive');
+              openTrip(toReviewTrip(found));
+            }}
+          />
+        </main>
+      )}
+
+      {!hasSource && !blocker && view !== 'history' && (
         <div className="empty-state glass">
           <BrandMark size={56} />
           <h2>Review your dash cam drives</h2>
@@ -432,6 +447,9 @@ export function App() {
           </p>
           <div className="empty-actions">
             <button className="primary large" onClick={openCard}>Open SD card</button>
+            {archiveOn && archived.length > 0 && (
+              <button className="large" onClick={() => setView('history')}>History</button>
+            )}
             {archiveOn && archived.length > 0 && (
               <button className="large" onClick={() => switchSource('archive')}>
                 Browse archive · {archived.length} drive{archived.length === 1 ? '' : 's'}

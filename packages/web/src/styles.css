@@ -37,6 +37,14 @@
   --warn: #b85a00;
   --danger: #d1242f;
   --inset: rgb(255 255 255 / 0.55);
+  /* Driver identity: the reference categorical slots, validated on these
+     surfaces in both modes (all-pairs, three slots). Past three, "other". */
+  --series-1: #2a78d6;
+  --series-2: #eb6834;
+  --series-3: #1baf7a;
+  --series-other: #8a7fd9;
+  --series-none: #9a9aa0;
+  --grid: rgb(60 60 67 / 0.1);
   --radius: 10px;
   --radius-lg: 18px;
   color-scheme: light dark;
@@ -71,6 +79,12 @@
     --warn: #ffb547;
     --danger: #ff6b6b;
     --inset: rgb(255 255 255 / 0.04);
+    --series-1: #3987e5;
+    --series-2: #d95926;
+    --series-3: #199e70;
+    --series-other: #9085e9;
+    --series-none: #7c7c82;
+    --grid: rgb(255 255 255 / 0.08);
   }
 }
 
@@ -1209,4 +1223,64 @@ input:not([type]):focus-visible { outline: 2px solid var(--accent); outline-offs
 @media (max-width: 760px) {
   .sheet-options { grid-template-columns: 1fr; }
   .source-switch { order: 5; }
+}
+
+/* --- history ---------------------------------------------------------- */
+.history-hero { grid-template-columns: 1fr; }
+.kpi-note { font-size: 11px; color: var(--ink-muted); }
+.chart-grid-2 { display: grid; grid-template-columns: repeat(auto-fit, minmax(380px, 1fr)); gap: 14px; }
+.chart-card { padding: 14px 16px 12px; display: grid; gap: 8px; min-width: 0; }
+.chart-card-head { display: flex; align-items: flex-start; gap: 12px; flex-wrap: wrap; }
+.chart-card-head > div:first-child { flex: 1; display: grid; gap: 1px; min-width: 180px; }
+.chart-card-head h3 { margin: 0; font: 650 15px/1.2 var(--font-display); letter-spacing: -0.01em; }
+.chart-card-head .muted { font-size: 12px; }
+.chart-legend { list-style: none; margin: 0; padding: 0; display: flex; flex-wrap: wrap; gap: 4px 14px; font-size: 12px; color: var(--ink-secondary); }
+.chart-legend li { display: inline-flex; align-items: center; gap: 6px; }
+.chart-swatch { display: inline-block; width: 10px; height: 10px; border-radius: 3px; flex: none; margin-right: 6px; vertical-align: -1px; }
+.chart-legend .chart-swatch { margin-right: 0; }
+.chart { position: relative; min-height: 190px; }
+.chart svg { display: block; overflow: visible; }
+.chart-grid { stroke: var(--grid); stroke-width: 1; }
+.chart-axis { font: 500 10.5px var(--font); fill: var(--ink-muted); font-variant-numeric: tabular-nums; }
+.chart-guide { stroke: var(--ink-muted); stroke-width: 1; stroke-dasharray: 3 4; opacity: 0.6; }
+.chart-guide-label { font-size: 10px; }
+.chart-hover-band { fill: var(--fill); }
+.chart-crosshair { stroke: var(--ink-muted); stroke-width: 1; }
+.chart-dot { stroke: var(--surface); stroke-width: 2; }
+.chart-tip {
+  position: absolute; top: 0; transform: translateX(-50%); pointer-events: none; z-index: 2;
+  display: grid; gap: 3px; min-width: 140px; padding: 8px 10px; border-radius: 10px;
+  background: var(--glass-strong); border: 1px solid var(--glass-edge); box-shadow: var(--shadow-lift);
+  -webkit-backdrop-filter: var(--glass-blur); backdrop-filter: var(--glass-blur);
+  font-size: 12px; color: var(--ink-secondary);
+}
+.chart-tip strong { color: var(--ink); font-size: 12px; }
+.chart-tip-row { display: flex; align-items: center; gap: 0; }
+.chart-tip-row b { margin-left: auto; padding-left: 12px; color: var(--ink); font-variant-numeric: tabular-nums; }
+.chart-tip-total { border-top: 1px solid var(--border); padding-top: 3px; margin-top: 1px; }
+.chart-table-wrap { overflow-x: auto; }
+.data-table small { color: var(--ink-muted); }
+.driver-table th[scope="row"] { white-space: nowrap; }
+.driver-table td, .driver-table th { white-space: nowrap; }
+.trend-up { color: var(--ok); font-weight: 600; }
+.trend-down { color: var(--danger); font-weight: 600; }
+
+.history-map-card { padding: 14px 16px 16px; display: grid; gap: 10px; }
+.history-map { height: 420px; min-height: 0; border-radius: 14px; overflow: hidden; }
+
+.mileage-form { display: flex; flex-wrap: wrap; gap: 10px; align-items: end; }
+.mileage-form .field { min-width: 140px; }
+.mileage-form .field--grow { flex: 1; }
+.mileage-form input { font: inherit; color: var(--ink); background: var(--fill); border: 1px solid transparent; border-radius: var(--radius); padding: 5px 9px; }
+.mileage-form input:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.mileage-hint, .mileage-foot { margin: 0; font-size: 12px; }
+.share { display: inline-flex; align-items: center; gap: 8px; font-variant-numeric: tabular-nums; }
+.share-bar { width: 80px; height: 6px; border-radius: 999px; background: var(--fill); overflow: hidden; }
+.share-bar > span { display: block; height: 100%; border-radius: inherit; background: var(--accent-fill); }
+.readings { list-style: none; margin: 0; padding: 0; display: grid; gap: 2px; font-size: 13px; }
+.readings li { display: flex; gap: 10px; align-items: baseline; padding: 4px 6px; border-radius: 8px; }
+.readings li:nth-child(odd) { background: var(--surface-sunken); }
+@media (max-width: 760px) {
+  .chart-grid-2 { grid-template-columns: 1fr; }
+  .history-map { height: 320px; }
 }

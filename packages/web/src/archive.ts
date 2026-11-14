@@ -331,3 +331,35 @@ export async function loadArchivedPoints(tripId: string, signal?: AbortSignal): 
     };
   });
 }
+
+// --- history ---------------------------------------------------------------
+
+/** One located event from the archive, for the history map. */
+export interface ArchivedEvent {
+  tripId: string;
+  kind: 'speeding' | 'braking' | 'acceleration' | 'cornering';
+  severity: 'minor' | 'moderate' | 'severe';
+  startMs: number;
+  endMs: number;
+  lat: number;
+  lon: number;
+  /** Peak km/h over the limit for speeding; peak g for the rest. */
+  value: number | null;
+  driverId: number | null;
+  detail: Record<string, unknown> | null;
+}
+
+export const listEvents = (sinceMs = 0) =>
+  fetch(`${BASE}/events?since_ms=${Math.max(0, Math.floor(sinceMs))}`).then((r) => json<ArchivedEvent[]>(r));
+
+export interface OdometerEntry { id: number; readMs: number; miles: number; note: string | null }
+
+export const listOdometer = () => fetch(`${BASE}/odometer`).then((r) => json<OdometerEntry[]>(r));
+
+export const addOdometer = (reading: { readMs: number; miles: number; note?: string }) =>
+  fetch(`${BASE}/odometer`, {
+    method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(reading),
+  }).then((r) => json<OdometerEntry>(r));
+
+export const deleteOdometer = (id: number) =>
+  fetch(`${BASE}/odometer/${id}`, { method: 'DELETE' }).then((r) => json<unknown>(r));

@@ -166,3 +166,27 @@ def test_status_counts():
     client.put(f"/api/archive/trips/{TRIP_ID}/clips/{REAR}", content=b"abc")
     status = client.get("/api/archive/status").json()
     assert status["trips"] == 1 and status["storedClips"] == 1 and status["videoBytes"] == 3
+
+
+def test_events_carry_positions_and_driver():
+    body = payload()
+    body["events"][0].update({"lat": 42.3, "lon": -71.5})
+    client.post("/api/archive/trips", json=body)
+    events = client.get("/api/archive/events").json()
+    assert [e["kind"] for e in events] == ["braking"], "events without a position are left out"
+    assert events[0]["tripId"] == TRIP_ID
+    assert client.get("/api/archive/events?kinds=speeding").json() == []
+    assert client.get("/api/archive/events?kinds=nonsense").json() == []
+
+
+def test_odometer_readings():
+    for reading in client.get("/api/archive/odometer").json():
+        client.delete(f"/api/archive/odometer/{reading['id']}")
+    first = client.post("/api/archive/odometer", json={"readMs": 2_000, "miles": 41_250.5}).json()
+    client.post("/api/archive/odometer", json={"readMs": 1_000, "miles": 41_000, "note": "oil change"})
+    readings = client.get("/api/archive/odometer").json()
+    assert [r["miles"] for r in readings] == [41_000, 41_250.5], "ordered by date"
+    assert readings[0]["note"] == "oil change"
+    assert client.post("/api/archive/odometer", json={"readMs": 3_000, "miles": -5}).status_code == 422
+    assert client.delete(f"/api/archive/odometer/{first['id']}").status_code == 200
+    assert client.delete(f"/api/archive/odometer/{first['id']}").status_code == 404

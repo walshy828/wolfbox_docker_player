@@ -292,6 +292,35 @@ share there instead (`- /mnt/nas/wolfbox:/data`). The SQLite file can be read
 with any SQLite tool -- `trips` has one row per drive with its distance, score,
 time over the limit and event counts; `points` and `events` have the detail.
 
+### History
+
+**History** (in the header once there is an archive) looks across every saved
+drive rather than one card:
+
+- **Totals** for the last 30 days, 90 days, 12 months or all time: distance,
+  driving time, drives, average score, time over the limit (and its share of
+  driving) and high-risk drives -- for everyone or one driver.
+- **Miles per day / week / month**, stacked by driver, and **average score**
+  per period, a line per driver, with the 85 and 65 band edges marked. Periods
+  follow the time zone chosen in the header. Quiet periods show as gaps, not
+  zeros. Each chart has a table view.
+- **By driver**: drives, miles, hours, average score and its 30-day trend,
+  high-risk drives, minutes over the limit per hour and hard events per 100
+  miles -- rates, so the driver who drives most is not penalised for it.
+- **Where**: every route on one map coloured by driver, or the **speeding** and
+  **hard event** hotspots, red where severe. Clicking a route or a dot opens
+  that drive.
+- **Mileage check**: enter odometer readings as you take them; between each
+  pair the archive's recorded miles are compared with the odometer's. Some
+  shortfall is normal (GPS takes a minute to lock on, and drives the card
+  looped over before they were saved are missing), but a large one means
+  driving the archive never saw.
+
+Drivers are told apart by colour in a fixed order (blue, orange, aqua) assigned
+by driver, so a driver keeps their colour whatever is filtered; a fourth and
+later driver share a neutral colour, and every chart also has a legend and a
+table, so colour is never the only cue.
+
 ### Time zones
 
 Dash cams are routinely set to the wrong zone -- the reference card was

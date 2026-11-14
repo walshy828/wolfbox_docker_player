@@ -108,6 +108,14 @@ CREATE TABLE IF NOT EXISTS events (
   detail TEXT
 );
 CREATE INDEX IF NOT EXISTS events_by_trip ON events(trip_id);
+CREATE TABLE IF NOT EXISTS odometer (
+  id INTEGER PRIMARY KEY,
+  read_ms INTEGER NOT NULL,
+  miles REAL NOT NULL,
+  note TEXT
+);
+CREATE INDEX IF NOT EXISTS odometer_by_time ON odometer(read_ms);
+CREATE INDEX IF NOT EXISTS events_by_kind ON events(kind, start_ms);
 CREATE TABLE IF NOT EXISTS clips (
   trip_id TEXT NOT NULL REFERENCES trips(id) ON DELETE CASCADE,
   name TEXT NOT NULL,
@@ -209,6 +217,12 @@ class TripIn(BaseModel):
 
 class TripPatch(BaseModel):
     driverId: Optional[int] = None
+
+
+class OdometerIn(BaseModel):
+    readMs: int
+    miles: float = Field(ge=0, le=2_000_000)
+    note: Optional[str] = Field(default=None, max_length=200)
 
 
 class DriverIn(BaseModel):
@@ -579,3 +593,61 @@ async def upload_clip(trip_id: str, name: str, request: Request) -> dict[str, An
 def get_clip(trip_id: str, name: str) -> FileResponse:
     """The original video. Range requests are honoured, so the player can seek."""
     return FileResponse(stored_clip_path(trip_id, name), media_type="video/mp4")
+
+
+# --- history ------------------------------------------------------------------
+
+@router.get("/events")
+def list_events(kinds: str = "speeding,braking,acceleration,cornering", since_ms: int = 0) -> list[dict[str, Any]]:
+    """
+    Where things happened, across every archived drive -- the points behind the
+    history map's hotspots. Only events with a known position are returned.
+    """
+    wanted = [k for k in kinds.split(",") if k in ("speeding", "braking", "acceleration", "cornering")]
+    if not wanted:
+        return []
+    with connect() as db:
+        rows = db.execute(
+            f"""SELECT events.trip_id, events.kind, events.severity, events.start_ms, events.end_ms,
+                       events.lat, events.lon, events.value, events.detail, trips.driver_id
+                FROM events JOIN trips ON trips.id = events.trip_id
+                WHERE events.kind IN ({','.join('?' * len(wanted))})
+                  AND events.lat IS NOT NULL AND events.start_ms >= ?
+                ORDER BY events.start_ms""",
+            (*wanted, since_ms),
+        ).fetchall()
+    return [
+        {
+            "tripId": r["trip_id"], "kind": r["kind"], "severity": r["severity"],
+            "startMs": r["start_ms"], "endMs": r["end_ms"], "lat": r["lat"], "lon": r["lon"],
+            "value": r["value"], "driverId": r["driver_id"],
+            "detail": json.loads(r["detail"]) if r["detail"] else None,
+        }
+        for r in rows
+    ]
+
+
+@router.get("/odometer")
+def list_odometer() -> list[dict[str, Any]]:
+    with connect() as db:
+        rows = db.execute("SELECT * FROM odometer ORDER BY read_ms").fetchall()
+    return [{"id": r["id"], "readMs": r["read_ms"], "miles": r["miles"], "note": r["note"]} for r in rows]
+
+
+@router.post("/odometer")
+def add_odometer(reading: OdometerIn) -> dict[str, Any]:
+    """Records an odometer reading. Mileage is checked between consecutive readings."""
+    with connect() as db:
+        cursor = db.execute(
+            "INSERT INTO odometer (read_ms, miles, note) VALUES (?, ?, ?)",
+            (reading.readMs, reading.miles, (reading.note or "").strip() or None),
+        )
+        return {"id": cursor.lastrowid, "readMs": reading.readMs, "miles": reading.miles, "note": reading.note}
+
+
+@router.delete("/odometer/{reading_id}")
+def delete_odometer(reading_id: int) -> dict[str, Any]:
+    with connect() as db:
+        if not db.execute("DELETE FROM odometer WHERE id = ?", (reading_id,)).rowcount:
+            raise HTTPException(status_code=404, detail="No such reading.")
+    return {"deleted": reading_id}
