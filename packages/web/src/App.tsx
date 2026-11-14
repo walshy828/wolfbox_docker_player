@@ -1,13 +1,16 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { assessRisk } from '@wolfbox/telemetry';
 import {
-  pickCard, partitionTrips, directoryPickerBlocker, ensureWritable, removeClipsFromCard, isCardTrip,
+  pickCard, partitionTrips, directoryPickerBlocker, ensureWritable, removeClipsFromCard, isCardTrip, isParkingEvent,
   type Card, type CardClip, type CardTrip, type ReviewTrip,
 } from './card.ts';
 import {
-  archiveStatus, listArchived, listDrivers, addDriver, setTripDriver, deleteArchived, toReviewTrip, toStatsEntry,
-  type ArchiveStatus, type ArchivedTrip, type Driver,
+  archiveStatus, listArchived, listDrivers, addDriver, updateTrip, assignDriver, importTrip, deleteArchived,
+  toReviewTrip, toStatsEntry,
+  type ArchiveStatus, type ArchivedTrip, type Driver, type TripPatch,
 } from './archive.ts';
+import { useAutoSave, useAutoSaveSetting } from './autosave.ts';
+import { selectTrips } from './tripView.ts';
 import {
   clipsInPair, clipsInTrips, deleteClips, findSuccessorTrip, successorClipIndex, tripTouched,
 } from './deletion.ts';
@@ -24,9 +27,9 @@ import { DriveOverview } from './components/DriveOverview.tsx';
 import { ImportSheet } from './components/ImportSheet.tsx';
 import { HistoryView } from './components/HistoryView.tsx';
 import { ConfirmInline } from './components/ConfirmInline.tsx';
-import { SummaryPanel } from './components/SummaryPanel.tsx';
-import { AdherencePanel } from './components/AdherencePanel.tsx';
-import { SafetyPanel } from './components/SafetyPanel.tsx';
+import { SummaryPanel, type MomentKind } from './components/SummaryPanel.tsx';
+import { MomentsPanel } from './components/MomentsPanel.tsx';
+import { DriveNotes } from './components/DriveNotes.tsx';
 import { GForceMeter } from './components/GForceMeter.tsx';
 import { SpeedRamp, SpeedBands } from './components/SpeedLegend.tsx';
 import { CollapsibleSection } from './components/CollapsibleSection.tsx';
@@ -97,6 +100,9 @@ export function App() {
   const [limitsOpen, setLimitsOpen] = useState(true);
   /** Which quantity the route line paints: speed driven, or speed over the limit. */
   const [mapMode, setMapMode] = useState<'speed' | 'excess'>('speed');
+  /** Which kind of moment the list beside the map is showing; set by tapping a scorecard tile. */
+  const [momentKind, setMomentKind] = useState<MomentKind>('all');
+  const [autoSaveOn, setAutoSaveOn] = useAutoSaveSetting();
   /**
    * The event or over-limit stretch selected from the Safety/Adherence panel,
    * so the map can pick out and fly to where it happened. `key` identifies
@@ -171,6 +177,24 @@ export function App() {
     [archived],
   );
 
+  /** Puts a drive the server just returned into the list, in place or in date order. */
+  const upsertArchived = useCallback((updated: ArchivedTrip) => {
+    setArchived((all) => {
+      const at = all.findIndex((a) => a.id === updated.id);
+      if (at >= 0) return all.map((a, i) => (i === at ? updated : a));
+      return [...all, updated].sort((a, b) => b.startLocalMs - a.startLocalMs);
+    });
+  }, []);
+
+  const autoSave = useAutoSave({
+    enabled: archive !== null && autoSaveOn && card !== null,
+    drives: cardTrips.drives,
+    stats: cardStats,
+    archived: archivedById,
+    cameraOffsetMs: card?.cameraUtcOffsetMs,
+    onSaved: upsertArchived,
+  });
+
   const { drives, events } = source === 'archive' ? archiveTrips : cardTrips;
   const tripStats = source === 'archive' ? archiveStats : cardStats;
   const archiveOn = archive !== null;
@@ -202,6 +226,7 @@ export function App() {
     setProgress({ done: 0, total: trip.clips.length });
     // A compliance view of the previous drive must not linger over the new one.
     setMapMode('speed');
+    setMomentKind('all');
     setHighlight(null);
 
     void loadTripTrack(trip, {
@@ -298,14 +323,61 @@ export function App() {
     }
   }, [refreshArchive]);
 
-  const changeDriver = useCallback(async (tripId: string, driverId: number | null) => {
+  /**
+   * Sets the driver, notes or flag on the open drive. A card drive that is not
+   * in history yet is saved first, from the track and limits already loaded,
+   * so annotating never waits on auto-save and never needs the archive sheet.
+   */
+  const annotate = useCallback(async (patch: TripPatch) => {
+    if (!trip) return;
     try {
-      const updated = await setTripDriver(tripId, driverId);
-      setArchived((all) => all.map((a) => (a.id === tripId ? updated : a)));
-      setTrip((current) => (current?.id === tripId ? toReviewTrip(updated) : current));
+      if (!archivedById.has(trip.id) && !trip.archived) {
+        if (!isCardTrip(trip) || !track?.summary) {
+          throw new Error('This drive has no GPS, so it cannot be saved to history.');
+        }
+        const entry = cardStats.get(trip.id);
+        await importTrip({
+          trip,
+          points: track.points,
+          summary: track.summary,
+          clipStarts: track.clipStarts,
+          adherence: limits?.adherence ?? null,
+          startLabel: entry?.status === 'ready' ? entry.startLabel : undefined,
+          endLabel: entry?.status === 'ready' ? entry.endLabel : undefined,
+          cameraOffsetMs: card?.cameraUtcOffsetMs,
+          driverId: null,
+        }, { withVideo: false });
+      }
+      upsertArchived(await updateTrip(trip.id, patch));
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : String(cause));
+      throw cause;
+    }
+  }, [trip, archivedById, track, limits, cardStats, card, upsertArchived]);
+
+  /** One driver for every ticked drive in the list. Drives not yet in history are skipped and named. */
+  const assignMany = useCallback(async (trips: ReviewTrip[], driverId: number | null) => {
+    const ids = trips.filter((t) => archivedById.has(t.id) || t.archived).map((t) => t.id);
+    const missing = trips.length - ids.length;
+    try {
+      if (ids.length > 0) {
+        await assignDriver(ids, driverId);
+        const name = drivers.find((d) => d.id === driverId)?.name ?? null;
+        setArchived((all) => all.map((a) => (ids.includes(a.id) ? { ...a, driverId, driverName: name } : a)));
+      }
+      setCheckedIds(new Set());
+      setError(missing > 0
+        ? `${missing} selected drive${missing === 1 ? ' is' : 's are'} not in history yet (still reading GPS, or no GPS), so ${missing === 1 ? 'it was' : 'they were'} left unassigned.`
+        : null);
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : String(cause));
     }
+  }, [archivedById, drivers]);
+
+  const createDriver = useCallback(async (name: string) => {
+    const driver = await addDriver(name);
+    setDrivers((all) => [...all.filter((d) => d.id !== driver.id), driver].sort((a, b) => a.name.localeCompare(b.name)));
+    return driver;
   }, []);
 
   const switchSource = useCallback((next: 'card' | 'archive') => {
@@ -356,6 +428,17 @@ export function App() {
   );
 
   const openTrip = useCallback((next: ReviewTrip) => { setTrip(next); setView('review'); }, []);
+
+  // The list's own order, so stepping goes where the eye expects.
+  const ordered = useMemo(() => selectTrips(drives, events, filter, sort, (t) => {
+    const entry = tripStats.get(t.id);
+    return entry?.status === 'ready' ? entry.risk?.score : undefined;
+  }), [drives, events, filter, sort, tripStats]);
+  const position = trip ? ordered.findIndex((t) => t.id === trip.id) : -1;
+  const stepTrip = useCallback((direction: 1 | -1) => {
+    const next = ordered[position + direction];
+    if (next) setTrip(next);
+  }, [ordered, position]);
 
   const blocker = directoryPickerBlocker();
   const drift = describeCameraDrift(card?.cameraUtcOffsetMs);
@@ -426,6 +509,13 @@ export function App() {
         <main className="overview-scroll">
           <HistoryView
             trips={archived} drivers={drivers} time={time} theme={theme}
+            onUpdate={async (tripId, patch) => {
+              try {
+                upsertArchived(await updateTrip(tripId, patch));
+              } catch (cause) {
+                setError(cause instanceof Error ? cause.message : String(cause));
+              }
+            }}
             onOpen={(tripId) => {
               const found = archivedById.get(tripId);
               if (!found) return;
@@ -468,6 +558,10 @@ export function App() {
             source={source}
             archived={archiveOn ? archivedById : undefined}
             onImport={archiveOn && source === 'card' && card ? () => setImporting({}) : undefined}
+            autoSave={archiveOn && source === 'card' && card ? {
+              on: autoSaveOn, onToggle: setAutoSaveOn, state: autoSave,
+              saved: cardTrips.drives.filter((d) => archivedById.has(d.id)).length,
+            } : undefined}
           />
         </main>
       )}
@@ -476,11 +570,7 @@ export function App() {
         <ImportSheet
           drives={cardTrips.drives} preselected={importing.preselected}
           archived={archivedById} stats={cardStats} drivers={drivers}
-          onAddDriver={async (name) => {
-            const driver = await addDriver(name);
-            setDrivers((all) => [...all.filter((d) => d.id !== driver.id), driver].sort((a, b) => a.name.localeCompare(b.name)));
-            return driver;
-          }}
+          onAddDriver={createDriver}
           cameraOffsetMs={card.cameraUtcOffsetMs}
           time={time}
           onClose={() => setImporting(null)}
@@ -506,6 +596,9 @@ export function App() {
               checkedIds={checkedIds} onCheckedChange={setCheckedIds}
               onDelete={source === 'card' ? deleteTrips : undefined} deleting={deleting}
               time={time} stats={tripStats}
+              archived={archiveOn ? archivedById : undefined}
+              drivers={drivers}
+              onAssign={archiveOn ? (trips, driverId) => void assignMany(trips, driverId) : undefined}
               actions={
                 <PinButton
                   pinned={pinned.trips} label="trip list"
@@ -523,6 +616,17 @@ export function App() {
                       { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })
                   : 'No trip selected'}
               </h2>
+              {trip && position >= 0 && (
+                <div className="step-trip" role="group" aria-label="Other drives">
+                  <button className="icon-toggle" disabled={position <= 0} onClick={() => stepTrip(-1)} title="Previous drive in the list" aria-label="Previous drive">
+                    <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true"><path d="M10 3 L5 8 L10 13" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" /></svg>
+                  </button>
+                  <span className="step-trip-count">{position + 1} / {ordered.length}</span>
+                  <button className="icon-toggle" disabled={position >= ordered.length - 1} onClick={() => stepTrip(1)} title="Next drive in the list" aria-label="Next drive">
+                    <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true"><path d="M6 3 L11 8 L6 13" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" /></svg>
+                  </button>
+                </div>
+              )}
               {trip && (
                 <div className="layout-controls" role="group" aria-label="Camera layout">
                   {(Object.keys(LAYOUT_LABEL) as CameraLayout[]).map((option) => (
@@ -595,53 +699,33 @@ export function App() {
               />
             )}
 
-            {trip && archiveOn && (
-              <div className="archive-bar">
-                {archivedTrip ? (
-                  <>
-                    <span className="archive-pill">Archive</span>
-                    <label className="archive-driver">
-                      Driver
-                      <select
-                        value={archivedTrip.driverId ?? ''}
-                        onChange={(event) => void changeDriver(trip.id, event.target.value ? Number(event.target.value) : null)}
-                      >
-                        <option value="">Not assigned</option>
-                        {drivers.map((driver) => <option key={driver.id} value={driver.id}>{driver.name}</option>)}
-                      </select>
-                    </label>
-                    <span className="muted">
-                      {archivedTrip.clips.some((clip) => clip.stored) ? 'Video saved' : 'Drive data only'}
-                    </span>
-                    <span className="spacer" />
-                    {confirmRemove ? (
-                      <ConfirmInline
-                        question="this drive from the archive, with any saved video?"
-                        busy={false}
-                        onConfirm={() => void removeFromArchive(trip.id)}
-                        onCancel={() => setConfirmRemove(false)}
-                      />
-                    ) : (
-                      <button className="link danger-link" onClick={() => setConfirmRemove(true)}>Remove from archive</button>
-                    )}
-                  </>
-                ) : (
-                  <>
-                    <span className={savedCopy ? 'archive-pill archive-pill--saved' : 'archive-pill archive-pill--card'}>
-                      {savedCopy ? 'Saved' : 'Only on card'}
-                    </span>
-                    <span className="muted">
-                      {savedCopy
-                        ? `In the archive${savedCopy.driverName ? ` · ${savedCopy.driverName}` : ''}${savedCopy.clips.some((c) => c.stored) ? ' · with video' : ''}`
-                        : 'This drive will be lost when the card loops over it.'}
-                    </span>
-                    <span className="spacer" />
-                    <button className="chip" onClick={() => setImporting({ preselected: [trip.id] })}>
-                      {savedCopy ? 'Save again…' : 'Save to archive…'}
-                    </button>
-                  </>
-                )}
-              </div>
+            {trip && archiveOn && !isParkingEvent(trip) && (
+              <DriveNotes
+                key={trip.id}
+                copy={archivedTrip ?? savedCopy}
+                drivers={drivers}
+                onChange={annotate}
+                onAddDriver={createDriver}
+                status={archivedTrip
+                  ? (archivedTrip.clips.some((clip) => clip.stored) ? 'In history, with video' : 'In history · data only')
+                  : savedCopy
+                    ? (savedCopy.clips.some((c) => c.stored) ? 'In history, with video' : 'In history · data only, video on card')
+                    : autoSaveOn ? 'Saving to history…' : 'Not in history yet: setting a driver, flag or note saves it'}
+                actions={archivedTrip ? (
+                  confirmRemove ? (
+                    <ConfirmInline
+                      question="this drive from the archive, with any saved video?"
+                      busy={false}
+                      onConfirm={() => void removeFromArchive(trip.id)}
+                      onCancel={() => setConfirmRemove(false)}
+                    />
+                  ) : (
+                    <button className="link danger-link" onClick={() => setConfirmRemove(true)}>Remove from history</button>
+                  )
+                ) : !savedCopy?.clips.some((c) => c.stored) ? (
+                  <button className="link" onClick={() => setImporting({ preselected: [trip.id] })}>Save video…</button>
+                ) : null}
+              />
             )}
 
             {track && track.points.length > 1 && (
@@ -665,6 +749,11 @@ export function App() {
                 <SummaryPanel
                   summary={track.summary} theme={theme} time={time}
                   limitStatus={limitStatus} risk={risk}
+                  onShowMoments={(kind) => {
+                    setMomentKind(kind);
+                    // The list lives beside the map; bring it on screen if the map is tucked away.
+                    document.querySelector('.moments')?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+                  }}
                 />
               )}
               {trip && (
@@ -729,17 +818,13 @@ export function App() {
               </div>
               <div className="map-scroll">
                 {track && track.points.length > 0 && (
-                  <AdherencePanel
-                    status={limitStatus} adherence={limits?.adherence}
+                  <MomentsPanel
+                    limitStatus={limitStatus} adherence={limits?.adherence}
+                    events={track.summary?.harshEvents ?? []}
+                    tripStartMs={track.points[0]!.timestampMs}
                     time={time} onSeek={seek} onOpen={setLimitsOpen}
                     selectedKey={highlight?.key} onHighlight={onHighlight}
-                  />
-                )}
-                {track?.summary && (
-                  <SafetyPanel
-                    events={track.summary.harshEvents} distanceMeters={track.summary.distanceMeters}
-                    tripStartMs={track.summary.startMs} time={time} onSeek={seek}
-                    selectedKey={highlight?.key} onHighlight={onHighlight}
+                    kind={momentKind} onKindChange={setMomentKind}
                   />
                 )}
                 <CollapsibleSection title="Legend" defaultOpen={false}>

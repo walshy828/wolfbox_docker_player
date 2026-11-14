@@ -1,5 +1,5 @@
 import { useMemo, useState, type ReactNode } from 'react';
-import { formatDuration, kphToMph } from '@wolfbox/telemetry';
+import { kphToMph } from '@wolfbox/telemetry';
 import { isParkingEvent, type ReviewTrip } from '../card.ts';
 import { describeSelection, describeTrips } from '../deletion.ts';
 import { formatLocal, type TimeContext } from '../time.ts';
@@ -11,6 +11,8 @@ import {
 } from '../tripView.ts';
 import { ConfirmInline, DeleteButton } from './ConfirmInline.tsx';
 import { RiskRing, RiskReasons } from './Risk.tsx';
+import { DriverTag, FlagGlyph } from './DriveNotes.tsx';
+import type { ArchivedTrip, Driver } from '../archive.ts';
 
 export type { TripFilter, TripSort };
 
@@ -34,12 +36,21 @@ interface Props {
   stats: ReadonlyMap<string, TripStatsEntry>;
   /** Panel controls owned by the layout, e.g. the pin toggle. */
   actions?: ReactNode;
+  /** The history's copy of each drive, for its driver, flag and notes. */
+  archived?: ReadonlyMap<string, ArchivedTrip>;
+  drivers?: Driver[];
+  /** Sets one driver on every ticked drive. Absent without an archive. */
+  onAssign?: (trips: ReviewTrip[], driverId: number | null) => void;
 }
 
 const DAY: Intl.DateTimeFormatOptions = { weekday: 'short', month: 'short', day: 'numeric' };
 const CLOCK: Intl.DateTimeFormatOptions = { hour: 'numeric', minute: '2-digit' };
 
-/** Distance, speeds and route, once the background queue has reached this trip. */
+/**
+ * Distance, length and top speed, once the background queue has reached this
+ * trip. Time over the limit is deliberately not here: it is the speeding
+ * reason chip under these figures, and saying it twice is what made rows busy.
+ */
 function TripFigures({ entry, minutes }: { entry?: TripStatsEntry; minutes: number }) {
   if (!entry || entry.status === 'pending') {
     return <span className="trip-figures trip-figures--pending">{minutes} min &middot; reading GPS&hellip;</span>;
@@ -48,19 +59,14 @@ function TripFigures({ entry, minutes }: { entry?: TripStatsEntry; minutes: numb
   const route = entry.startLabel || entry.endLabel
     ? `${entry.startLabel ?? 'Unknown'} → ${entry.endLabel ?? 'Unknown'}`
     : null;
-  const speeding = entry.risk?.speeding;
   return (
     <>
-      {route && <span className="trip-route">{route}</span>}
       <span className="trip-figures">
         <span>{metersToMiles(entry.distanceMeters).toFixed(1)} mi</span>
         <span>{minutes} min</span>
-        <span>{Math.round(kphToMph(entry.maxSpeedKph))} top</span>
-        <span>{Math.round(kphToMph(entry.averageMovingSpeedKph))} avg</span>
-        {speeding && speeding.stretchSec > 0 && (
-          <span className="trip-figures-over">{formatDuration(speeding.stretchSec)} over</span>
-        )}
+        <span>{Math.round(kphToMph(entry.maxSpeedKph))} mph top</span>
       </span>
+      {route && <span className="trip-route" title={route}>{route}</span>}
     </>
   );
 }
@@ -81,7 +87,7 @@ type Confirming = { kind: 'trip'; id: string } | { kind: 'selection' } | null;
  */
 export function TripList({
   drives, events, filter, sort, onFilterChange, onSortChange, selectedId, onSelect,
-  checkedIds, onCheckedChange, onDelete, deleting, time, stats, actions,
+  checkedIds, onCheckedChange, onDelete, deleting, time, stats, actions, archived, drivers = [], onAssign,
 }: Props) {
   const [choosing, setChoosing] = useState(false);
   const [confirming, setConfirming] = useState<Confirming>(null);
@@ -154,7 +160,7 @@ export function TripList({
             <option value="longest">Longest first</option>
           </select>
         </label>
-        {onDelete && (
+        {(onDelete || onAssign) && (
           <button
             className={choosing ? 'chip selected' : 'chip'}
             aria-pressed={choosing}
@@ -178,9 +184,24 @@ export function TripList({
             <>
               <span>{describeSelection(checked)}</span>
               <span className="spacer" />
-              <button className="danger" onClick={() => setConfirming({ kind: 'selection' })}>
-                Delete
-              </button>
+              {onAssign && (
+                <select
+                  className="assign-select" aria-label="Set the driver of the selected drives" value=""
+                  onChange={(event) => {
+                    if (!event.target.value) return;
+                    onAssign(checked, event.target.value === 'none' ? null : Number(event.target.value));
+                  }}
+                >
+                  <option value="">Driver…</option>
+                  {drivers.map((driver) => <option key={driver.id} value={driver.id}>{driver.name}</option>)}
+                  <option value="none">Not assigned</option>
+                </select>
+              )}
+              {onDelete && (
+                <button className="danger" onClick={() => setConfirming({ kind: 'selection' })}>
+                  Delete
+                </button>
+              )}
               <button onClick={() => onCheckedChange(new Set())}>Clear</button>
             </>
           )}
@@ -200,6 +221,7 @@ export function TripList({
               const asking = confirming?.kind === 'trip' && confirming.id === trip.id;
               const rowNoun = isParkingEvent(trip) ? 'event' : 'drive';
               const entry = stats.get(trip.id);
+              const copy = archived?.get(trip.id) ?? trip.archived;
               return (
                 <li key={trip.id}>
                   {heading && <h3 className="day-heading">{heading}</h3>}
@@ -234,6 +256,10 @@ export function TripList({
                             {!grouped && <span className="trip-day">{day}</span>}
                             {trip.hasEvent && <span className="badge badge--warn">event</span>}
                             {trip.clips.length === 1 && <span className="trip-day">1 clip</span>}
+                            <span className="spacer" />
+                            {copy?.flagged && <FlagGlyph title={copy.notes || 'Flagged for review'} />}
+                            {copy?.notes && !copy.flagged && <span className="note-dot" title={copy.notes} aria-label="Has notes" />}
+                            {copy?.driverName && <DriverTag name={copy.driverName} />}
                           </span>
                           <TripFigures entry={entry} minutes={minutes} />
                           <RiskReasons entry={entry} />

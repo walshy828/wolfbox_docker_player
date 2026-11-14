@@ -1,15 +1,17 @@
 import { useEffect, useMemo, useState } from 'react';
 import {
-  addOdometer, deleteOdometer, listEvents, listOdometer,
-  type ArchivedEvent, type ArchivedTrip, type Driver, type OdometerEntry,
+  addOdometer, deleteOdometer, listEvents, listOdometer, toStatsEntry,
+  type ArchivedEvent, type ArchivedTrip, type Driver, type OdometerEntry, type TripPatch,
 } from '../archive.ts';
+import { RiskRing } from './Risk.tsx';
+import { FlagGlyph } from './DriveNotes.tsx';
 import {
   RANGE_LABEL, bucketFor, driverKey, driverSlot, driverSummaries, inRange, periods, reconcile, tripInstant,
   UNASSIGNED, type HistoryRange,
 } from '../history.ts';
 import { formatSpan } from '../overview.ts';
 import type { Theme } from '../speedScale.ts';
-import type { TimeContext } from '../time.ts';
+import { formatLocal, type TimeContext } from '../time.ts';
 import { MilesChart, ScoreChart, seriesColor, type Series } from './HistoryCharts.tsx';
 import { HistoryMap } from './HistoryMap.tsx';
 
@@ -19,8 +21,10 @@ import { HistoryMap } from './HistoryMap.tsx';
  * where -- and whether the miles add up.
  */
 export function HistoryView({
-  trips, drivers, time, theme, onOpen,
+  trips, drivers, time, theme, onOpen, onUpdate,
 }: {
+  /** Sets a drive's driver, notes or flag. */
+  onUpdate: (tripId: string, patch: TripPatch) => Promise<void>;
   trips: ArchivedTrip[];
   drivers: Driver[];
   time: TimeContext;
@@ -167,6 +171,8 @@ export function HistoryView({
         </section>
       )}
 
+      <DriveLog trips={chosen} drivers={drivers} time={time} onOpen={onOpen} onUpdate={onUpdate} />
+
       <HistoryMap trips={chosen} events={chosenEvents} series={series} theme={theme} onOpen={onOpen} />
 
       <MileagePanel
@@ -181,6 +187,114 @@ export function HistoryView({
         }}
       />
     </div>
+  );
+}
+
+type LogFilter = 'all' | 'flagged' | 'notes' | 'unassigned';
+const LOG_PAGE = 25;
+const LOG_WHEN: Intl.DateTimeFormatOptions = { weekday: 'short', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' };
+
+/**
+ * Every drive in the range as a row you can act on without opening it: who
+ * drove (one select), whether it is flagged (one tap), and its notes. This is
+ * where a drive saved automatically, with nobody assigned, gets its driver.
+ */
+function DriveLog({
+  trips, drivers, time, onOpen, onUpdate,
+}: {
+  trips: ArchivedTrip[];
+  drivers: Driver[];
+  time: TimeContext;
+  onOpen: (tripId: string) => void;
+  onUpdate: (tripId: string, patch: TripPatch) => Promise<void>;
+}) {
+  const [filter, setFilter] = useState<LogFilter>('all');
+  const [limit, setLimit] = useState(LOG_PAGE);
+  const counts = {
+    all: trips.length,
+    flagged: trips.filter((t) => t.flagged).length,
+    notes: trips.filter((t) => t.notes).length,
+    unassigned: trips.filter((t) => t.driverId === null).length,
+  };
+  const shown = trips
+    .filter((t) => filter === 'all' || (filter === 'flagged' ? t.flagged : filter === 'notes' ? !!t.notes : t.driverId === null))
+    .sort((a, b) => b.startLocalMs - a.startLocalMs);
+
+  return (
+    <section className="chart-card glass drive-log">
+      <header className="chart-card-head">
+        <div>
+          <h3>Drives</h3>
+          <span className="muted">Set who drove, flag a drive, or open it to watch and add notes</span>
+        </div>
+        <span className="spacer" />
+        <div className="segmented" role="group" aria-label="Show drives">
+          {([['all', 'All'], ['unassigned', 'No driver'], ['flagged', 'Flagged'], ['notes', 'With notes']] as const).map(([value, label]) => (
+            <button key={value} className={filter === value ? 'selected' : ''} aria-pressed={filter === value} onClick={() => { setFilter(value); setLimit(LOG_PAGE); }}>
+              {label} <span className="count">{counts[value]}</span>
+            </button>
+          ))}
+        </div>
+      </header>
+      {shown.length === 0 ? (
+        <p className="muted pad">No drives match.</p>
+      ) : (
+        <div className="chart-table-wrap">
+          <table className="data-table drive-log-table">
+            <thead>
+              <tr>
+                <th scope="col"><span className="visually-hidden">Score</span></th>
+                <th scope="col">When</th><th scope="col">Driver</th><th scope="col">Route</th>
+                <th scope="col">Miles</th><th scope="col">Over limit</th><th scope="col">Hard events</th>
+                <th scope="col"><span className="visually-hidden">Flag</span></th><th scope="col">Notes</th>
+              </tr>
+            </thead>
+            <tbody>
+              {shown.slice(0, limit).map((trip) => (
+                <tr key={trip.id}>
+                  <td><RiskRing entry={toStatsEntry(trip)} size={28} /></td>
+                  <th scope="row">
+                    <button className="link" onClick={() => onOpen(trip.id)} title="Open this drive">
+                      {formatLocal(trip.startLocalMs, time, LOG_WHEN)}
+                    </button>
+                  </th>
+                  <td>
+                    <select
+                      className="assign-select" aria-label="Driver"
+                      value={trip.driverId ?? ''}
+                      onChange={(event) => void onUpdate(trip.id, { driverId: event.target.value ? Number(event.target.value) : null })}
+                    >
+                      <option value="">Not assigned</option>
+                      {drivers.map((d) => <option key={d.id} value={d.id}>{d.name}</option>)}
+                    </select>
+                  </td>
+                  <td className="drive-log-route">
+                    {trip.startLabel || trip.endLabel ? `${trip.startLabel ?? '?'} → ${trip.endLabel ?? '?'}` : <span className="muted">—</span>}
+                  </td>
+                  <td>{(trip.distanceMeters / 1609.344).toFixed(1)}</td>
+                  <td className={trip.overLimitSec > 0 ? 'trend-down' : 'muted'}>{trip.overLimitSec > 0 ? formatSpan(trip.overLimitSec) : '—'}</td>
+                  <td className={trip.severeEvents > 0 ? 'trend-down' : trip.hardEvents > 0 ? '' : 'muted'}>{trip.hardEvents || '—'}</td>
+                  <td>
+                    <button
+                      className={trip.flagged ? 'icon-toggle drive-log-flag selected' : 'icon-toggle drive-log-flag'}
+                      aria-pressed={trip.flagged} aria-label={trip.flagged ? 'Clear flag' : 'Flag'}
+                      title={trip.flagged ? 'Clear the flag' : 'Flag this drive'}
+                      onClick={() => void onUpdate(trip.id, { flagged: !trip.flagged })}
+                    >
+                      <FlagGlyph />
+                    </button>
+                  </td>
+                  <td className="drive-log-notes" title={trip.notes || undefined}>{trip.notes || <span className="muted">—</span>}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+      {shown.length > limit && (
+        <button className="link" onClick={() => setLimit(limit + LOG_PAGE * 2)}>Show more · {shown.length - limit} left</button>
+      )}
+    </section>
   );
 }
 

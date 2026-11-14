@@ -152,6 +152,52 @@ def test_drivers_and_tagging():
     assert client.get(f"/api/archive/trips/{TRIP_ID}").json()["driverName"] == "Alex"
 
 
+def test_notes_and_flag_patch_only_what_is_sent():
+    client.post("/api/archive/trips", json=payload())
+    sam = client.post("/api/archive/drivers", json={"name": "Sam"}).json()
+    client.patch(f"/api/archive/trips/{TRIP_ID}", json={"driverId": sam["id"]})
+
+    noted = client.patch(f"/api/archive/trips/{TRIP_ID}", json={"notes": "  Rolled the stop on Main St  ", "flagged": True}).json()
+    assert noted["notes"] == "Rolled the stop on Main St"
+    assert noted["flagged"] is True
+    assert noted["driverName"] == "Sam", "a patch without driverId leaves the driver alone"
+
+    # Re-importing (as auto-save does) keeps notes and the flag.
+    client.post("/api/archive/trips", json=payload())
+    kept = client.get(f"/api/archive/trips/{TRIP_ID}").json()
+    assert kept["notes"] == "Rolled the stop on Main St" and kept["flagged"] is True
+
+    cleared = client.patch(f"/api/archive/trips/{TRIP_ID}", json={"notes": "", "flagged": False, "driverId": None}).json()
+    assert cleared["notes"] == "" and cleared["flagged"] is False and cleared["driverId"] is None
+    assert client.patch("/api/archive/trips/2026-01-01T00-00-00", json={"notes": "x"}).status_code == 404
+
+
+def test_bulk_assign_driver():
+    client.post("/api/archive/trips", json=payload())
+    other = "2026-10-12T08-00-00"
+    client.post("/api/archive/trips", json=payload(id=other))
+    jo = client.post("/api/archive/drivers", json={"name": "Jo"}).json()
+    result = client.post("/api/archive/trips/assign", json={"ids": [TRIP_ID, other, "2026-01-01T00-00-00"], "driverId": jo["id"]}).json()
+    assert result["updated"] == 2
+    assert {t["driverName"] for t in client.get("/api/archive/trips").json() if t["id"] in (TRIP_ID, other)} == {"Jo"}
+    assert client.post("/api/archive/trips/assign", json={"ids": [TRIP_ID], "driverId": 9999}).status_code == 400
+    assert client.post("/api/archive/trips/assign", json={"ids": ["../etc"], "driverId": None}).status_code == 400
+    client.delete(f"/api/archive/trips/{other}")
+
+
+def test_migration_adds_columns_to_an_old_database():
+    import sqlite3
+    path = os.path.join(_scratch, "old.sqlite")
+    db = sqlite3.connect(path)
+    db.row_factory = sqlite3.Row
+    db.execute("CREATE TABLE trips (id TEXT PRIMARY KEY, imported_ms INTEGER)")
+    archive.migrate(db)
+    columns = {row["name"] for row in db.execute("PRAGMA table_info(trips)")}
+    assert {"notes", "flagged"} <= columns
+    archive.migrate(db)  # and again is harmless
+    db.close()
+
+
 def test_delete_removes_data_and_video():
     client.post("/api/archive/trips", json=payload())
     client.put(f"/api/archive/trips/{TRIP_ID}/clips/{FRONT}", content=b"hello")

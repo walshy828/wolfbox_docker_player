@@ -65,8 +65,19 @@ export interface ArchivedTrip {
   summary: Partial<TripSummary>;
   risk: DriveRisk | null;
   route: RoutePreview;
+  /** Free text from the reviewer; empty when none. */
+  notes: string;
+  /** Marked as needing a closer look or a conversation. */
+  flagged: boolean;
   importedMs: number;
   clips: ArchivedClip[];
+}
+
+/** What can be changed on an archived drive after the fact. Fields left out are left alone. */
+export interface TripPatch {
+  driverId?: number | null;
+  notes?: string;
+  flagged?: boolean;
 }
 
 interface PointColumns {
@@ -102,9 +113,18 @@ export const addDriver = (name: string) => fetch(`${BASE}/drivers`, {
   method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ name }),
 }).then((r) => json<Driver>(r));
 
-export const setTripDriver = (tripId: string, driverId: number | null) => fetch(`${BASE}/trips/${tripId}`, {
-  method: 'PATCH', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ driverId }),
+export const updateTrip = (tripId: string, patch: TripPatch) => fetch(`${BASE}/trips/${tripId}`, {
+  method: 'PATCH', headers: { 'content-type': 'application/json' }, body: JSON.stringify(patch),
 }).then((r) => json<ArchivedTrip>(r));
+
+export const setTripDriver = (tripId: string, driverId: number | null) => updateTrip(tripId, { driverId });
+
+/** Sets one driver on many drives in one request. */
+export const assignDriver = (ids: readonly string[], driverId: number | null) => fetch(`${BASE}/trips/assign`, {
+  method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ ids, driverId }),
+}).then((r) => json<{ updated: number }>(r));
+
+export const getArchived = (tripId: string) => fetch(`${BASE}/trips/${tripId}`).then((r) => json<ArchivedTrip>(r));
 
 export const deleteArchived = (tripId: string) =>
   fetch(`${BASE}/trips/${tripId}`, { method: 'DELETE' }).then((r) => json<unknown>(r));

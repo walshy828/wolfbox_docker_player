@@ -357,7 +357,8 @@ select {
 }
 .trip { grid-template-columns: 36px minmax(0, 1fr); column-gap: 10px; align-items: start; padding: 8px; }
 .trip-body { display: grid; gap: 2px; min-width: 0; }
-.trip-when { font-weight: 600; font-size: 14px; display: inline-flex; align-items: center; gap: 5px; }
+.trip-when { font-weight: 600; font-size: 14px; display: flex; align-items: center; gap: 5px; min-width: 0; }
+.trip-when .spacer { flex: 1; }
 
 /* Risk ring: the list's one headline figure. Dashed while speed limits are
    still loading, so a provisional score never reads as a final one. */
@@ -1054,7 +1055,7 @@ button.danger:hover:not(:disabled) { background: var(--danger); color: var(--acc
   grid-template-columns: repeat(auto-fill, minmax(290px, 1fr));
 }
 .drive-card {
-  display: grid; grid-template-rows: auto 1fr; padding: 0; overflow: hidden;
+  display: grid; grid-template-rows: auto 1fr; grid-template-columns: minmax(0, 1fr); padding: 0; overflow: hidden;
   text-align: left; font-weight: 400; color: var(--ink);
   transition: transform 160ms ease, box-shadow 160ms ease, background-color 160ms ease;
 }
@@ -1085,7 +1086,7 @@ button.danger:hover:not(:disabled) { background: var(--danger); color: var(--acc
 .route-thumb-line line { stroke-width: 3.5; stroke-linecap: round; }
 .route-thumb-start { fill: var(--surface); stroke: var(--ink); stroke-width: 2; }
 .route-thumb-end { fill: var(--ink); stroke: var(--surface); stroke-width: 2; }
-.drive-card-body { display: grid; gap: 4px; padding: 12px 14px 14px; align-content: start; }
+.drive-card-body { display: grid; gap: 4px; padding: 12px 14px 14px; align-content: start; min-width: 0; }
 .drive-card-when { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; padding-right: 48px; }
 .drive-card-when strong { font: 650 17px/1.2 var(--font-display); letter-spacing: -0.01em; }
 .drive-card-when > span:not(.band-label):not(.badge) { font-size: 12px; color: var(--ink-muted); }
@@ -1138,21 +1139,8 @@ button.danger:hover:not(:disabled) { background: var(--danger); color: var(--acc
 }
 .tag--saved { color: var(--accent); background: color-mix(in srgb, var(--accent) 13%, transparent); }
 .tag--driver { color: var(--ink); }
-.drive-card-tags { display: flex; gap: 5px; flex-wrap: wrap; }
+.drive-card-tags { display: flex; gap: 5px; flex-wrap: wrap; min-width: 0; }
 
-/* The strip under the video saying where this drive lives, and what to do about it. */
-.archive-bar {
-  display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
-  padding: 8px 14px; border-bottom: 1px solid var(--border); font-size: 13px;
-}
-.archive-pill {
-  font-size: 11px; font-weight: 700; letter-spacing: 0.02em; padding: 2px 9px; border-radius: 999px;
-  color: var(--accent); background: color-mix(in srgb, var(--accent) 13%, transparent);
-}
-.archive-pill--card { color: var(--warn); background: color-mix(in srgb, var(--warn) 13%, transparent); }
-.archive-pill--saved { color: var(--ok); background: color-mix(in srgb, var(--ok) 13%, transparent); }
-.archive-driver { display: inline-flex; align-items: center; gap: 6px; color: var(--ink-secondary); }
-.archive-driver select { padding: 3px 8px; }
 button.link.danger-link { color: var(--danger); }
 
 /* Import sheet: a centred glass dialog over a dimmed, blurred workspace. */
@@ -1284,3 +1272,108 @@ input:not([type]):focus-visible { outline: 2px solid var(--accent); outline-offs
   .chart-grid-2 { grid-template-columns: 1fr; }
   .history-map { height: 320px; }
 }
+
+/* --- Driver, flag and notes ------------------------------------------- */
+
+.driver-tag {
+  display: inline-flex; align-items: center; gap: 4px; flex: none;
+  font-size: 11px; font-weight: 600; color: var(--ink-secondary);
+  padding: 1px 7px 1px 2px; border-radius: 999px; background: var(--fill);
+}
+.driver-tag-initial {
+  display: grid; place-items: center; width: 16px; height: 16px; border-radius: 50%;
+  background: var(--accent-fill); color: var(--accent-ink); font-size: 10px; font-weight: 700;
+}
+.sidebar .driver-tag-name { max-width: 9ch; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.flag-glyph { flex: none; color: var(--warn); vertical-align: -2px; }
+.note-dot {
+  flex: none; width: 7px; height: 7px; border-radius: 50%; background: var(--ink-muted);
+}
+.tag--flag { display: inline-flex; align-items: center; gap: 4px; color: var(--warn); background: color-mix(in srgb, var(--warn) 13%, transparent); }
+.drive-card-note {
+  flex-basis: 100%; min-width: 0; width: 0; font-size: 12px; font-style: italic; color: var(--ink-secondary);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+
+.drive-notes {
+  display: grid; gap: 8px; padding: 10px 14px; border-bottom: 1px solid var(--border); font-size: 13px;
+}
+.drive-notes-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.drive-notes-label { font-size: 12px; font-weight: 600; color: var(--ink-muted); }
+.driver-chips { display: flex; gap: 5px; flex-wrap: wrap; align-items: center; }
+.driver-chips .chip, .chip--flag { padding: 3px 11px; }
+.chip--ghost { background: none; border: 1px dashed var(--border); color: var(--ink-secondary); }
+.chip--flag { display: inline-flex; align-items: center; gap: 5px; }
+.chip--flag.selected, .chip--flag.selected:hover:not(:disabled) { background: var(--warn); color: #fff; }
+.chip--flag.selected .flag-glyph { color: #fff; }
+.driver-add { display: inline-flex; gap: 4px; }
+.driver-add input { width: 12ch; padding: 3px 8px; font-size: 13px; }
+.drive-notes-text {
+  width: 100%; box-sizing: border-box; resize: vertical; min-height: 32px;
+  font: inherit; font-size: 13px; padding: 6px 10px; border-radius: var(--radius);
+  border: 1px solid var(--border); background: var(--surface-sunken); color: var(--ink);
+}
+.drive-notes-text:focus { outline: 2px solid var(--accent); outline-offset: -1px; background: var(--surface-raised); }
+.drive-notes-foot { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; font-size: 12px; }
+.drive-notes-ok { color: var(--ok); }
+.drive-notes-error { color: var(--danger); }
+.assign-select { padding: 3px 8px; font-size: 13px; }
+
+/* Previous / next drive, beside the drive's title. */
+.step-trip { display: inline-flex; align-items: center; gap: 2px; }
+.step-trip-count { font-size: 12px; color: var(--ink-muted); font-variant-numeric: tabular-nums; min-width: 4ch; text-align: center; }
+
+/* Scorecard tiles: the value, and what it cost. */
+.issue-tile-top { display: flex; align-items: baseline; justify-content: space-between; gap: 6px; }
+.issue-tile-points {
+  font-size: 11px; font-weight: 700; color: var(--danger); font-variant-numeric: tabular-nums;
+  padding: 0 6px; border-radius: 999px; background: color-mix(in srgb, var(--danger) 12%, transparent);
+}
+button.issue-tile--link {
+  text-align: left; font: inherit; font-weight: 400; cursor: pointer; color: inherit;
+}
+button.issue-tile--link:hover:not(:disabled) { border-color: currentColor; filter: brightness(0.98); }
+button.issue-tile--link .issue-tile-label::after { content: ' ›'; color: var(--ink-muted); }
+
+/* --- Moments to check ---------------------------------------------------- */
+
+.moments-controls { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; justify-content: space-between; }
+.moment-filters { display: flex; gap: 4px; flex-wrap: wrap; }
+.moment-filters .chip { display: inline-flex; align-items: center; gap: 5px; padding: 3px 10px; font-size: 12px; }
+.moment-dot { flex: none; width: 8px; height: 8px; border-radius: 50%; display: inline-block; }
+.moment-dot--speeding { background: var(--danger); border-radius: 2px; }
+.moment-dot--braking { background: var(--warn); }
+.moment-dot--acceleration { background: var(--accent); }
+.moment-dot--cornering { background: var(--series-3); border-radius: 1px; transform: rotate(45deg); }
+.stretch.moment { padding: 0; }
+.moment-button {
+  width: 100%; display: flex; align-items: center; gap: 8px; text-align: left;
+  background: none; border: none; padding: 7px 8px; font: inherit; font-size: 13px; font-weight: 400; color: inherit;
+  border-radius: 10px;
+}
+.moment-button:hover:not(:disabled) { background: var(--fill); }
+.moment-when { flex: none; min-width: 72px; color: var(--accent); font-variant-numeric: tabular-nums; font-weight: 500; }
+.moment-what { flex: 1; min-width: 0; }
+.moment-detail { color: var(--ink-muted); }
+.moments-clean {
+  margin: 4px 0 0; padding: 10px 12px; border-radius: 12px; font-size: 13px;
+  color: var(--ok); background: color-mix(in srgb, var(--ok) 9%, transparent);
+}
+.moments .fold-body { display: grid; gap: 8px; }
+.moments .stretches { margin: 0; }
+
+/* Auto-save to history, under the card's headline. */
+.autosave-line { display: inline-flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.autosave-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--ink-muted); }
+.autosave-dot--on { background: var(--ok); }
+.autosave-line::before { display: none; }
+
+/* History: the drive log. */
+.visually-hidden { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+.drive-log .chart-card-head .spacer { flex: 1; }
+.drive-log-table th, .drive-log-table td { vertical-align: middle; font-size: 13px; }
+.drive-log-table th .link { font-weight: 600; white-space: nowrap; }
+.drive-log-route { max-width: 260px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--ink-secondary); }
+.drive-log-notes { max-width: 240px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-style: italic; }
+.drive-log-flag .flag-glyph { color: var(--ink-muted); opacity: 0.5; }
+.drive-log-flag.selected .flag-glyph { color: var(--warn); opacity: 1; }

@@ -78,6 +78,8 @@ CREATE TABLE IF NOT EXISTS trips (
   summary TEXT,
   risk TEXT,
   route TEXT,
+  notes TEXT,
+  flagged INTEGER NOT NULL DEFAULT 0,
   imported_ms INTEGER NOT NULL,
   updated_ms INTEGER NOT NULL
 );
@@ -136,6 +138,22 @@ def init() -> None:
     MEDIA_DIR.mkdir(parents=True, exist_ok=True)
     with connect() as db:
         db.executescript(SCHEMA)
+        migrate(db)
+
+
+# Columns added after the first release, as (name, definition). `CREATE TABLE
+# IF NOT EXISTS` leaves an existing table alone, so these are added in place.
+TRIP_COLUMNS_ADDED = (
+    ("notes", "TEXT"),
+    ("flagged", "INTEGER NOT NULL DEFAULT 0"),
+)
+
+
+def migrate(db: sqlite3.Connection) -> None:
+    have = {row["name"] for row in db.execute("PRAGMA table_info(trips)")}
+    for name, definition in TRIP_COLUMNS_ADDED:
+        if name not in have:
+            db.execute(f"ALTER TABLE trips ADD COLUMN {name} {definition}")
 
 
 @contextmanager
@@ -216,6 +234,14 @@ class TripIn(BaseModel):
 
 
 class TripPatch(BaseModel):
+    """Only the fields sent are changed, so `{"driverId": null}` unassigns while `{}` leaves it be."""
+    driverId: Optional[int] = None
+    notes: Optional[str] = Field(default=None, max_length=4000)
+    flagged: Optional[bool] = None
+
+
+class AssignIn(BaseModel):
+    ids: list[str] = Field(min_length=1, max_length=5000)
     driverId: Optional[int] = None
 
 
@@ -276,6 +302,8 @@ def trip_row_to_json(row: sqlite3.Row, clips: list[sqlite3.Row]) -> dict[str, An
         "summary": summary,
         "risk": json.loads(row["risk"]) if row["risk"] else None,
         "route": json.loads(row["route"] or "[]"),
+        "notes": row["notes"] or "",
+        "flagged": bool(row["flagged"]),
         "importedMs": row["imported_ms"],
         "clips": [
             {
@@ -511,21 +539,51 @@ def get_points(trip_id: str) -> dict[str, Any]:
     }
 
 
+def check_driver(db: sqlite3.Connection, driver_id: Optional[int]) -> None:
+    if driver_id is not None and db.execute(
+        "SELECT 1 FROM drivers WHERE id = ?", (driver_id,)
+    ).fetchone() is None:
+        raise HTTPException(status_code=400, detail="No such driver.")
+
+
 @router.patch("/trips/{trip_id}")
 def patch_trip(trip_id: str, patch: TripPatch) -> dict[str, Any]:
+    """Sets who drove, the notes, or the flag -- whichever the body names."""
     check_trip_id(trip_id)
+    sent = patch.model_fields_set
+    changes: list[tuple[str, Any]] = []
+    if "driverId" in sent:
+        changes.append(("driver_id", patch.driverId))
+    if "notes" in sent:
+        changes.append(("notes", (patch.notes or "").strip() or None))
+    if "flagged" in sent:
+        changes.append(("flagged", int(bool(patch.flagged))))
     with connect() as db:
-        if patch.driverId is not None and db.execute(
-            "SELECT 1 FROM drivers WHERE id = ?", (patch.driverId,)
-        ).fetchone() is None:
-            raise HTTPException(status_code=400, detail="No such driver.")
-        updated = db.execute(
-            "UPDATE trips SET driver_id = ?, updated_ms = ? WHERE id = ?",
-            (patch.driverId, now_ms(), trip_id),
-        ).rowcount
-        if not updated:
+        if db.execute("SELECT 1 FROM trips WHERE id = ?", (trip_id,)).fetchone() is None:
             raise HTTPException(status_code=404, detail="No such drive in the archive.")
+        if "driverId" in sent:
+            check_driver(db, patch.driverId)
+        if changes:
+            assignments = ", ".join(f"{column} = ?" for column, _ in changes)
+            db.execute(
+                f"UPDATE trips SET {assignments}, updated_ms = ? WHERE id = ?",
+                (*(value for _, value in changes), now_ms(), trip_id),
+            )
         return load_trip(db, trip_id)
+
+
+@router.post("/trips/assign")
+def assign_driver(body: AssignIn) -> dict[str, Any]:
+    """Sets one driver on many drives at once; ids not in the archive are ignored."""
+    for trip_id in body.ids:
+        check_trip_id(trip_id)
+    with connect() as db:
+        check_driver(db, body.driverId)
+        updated = db.execute(
+            f"UPDATE trips SET driver_id = ?, updated_ms = ? WHERE id IN ({','.join('?' * len(body.ids))})",
+            (body.driverId, now_ms(), *body.ids),
+        ).rowcount
+    return {"updated": updated}
 
 
 @router.delete("/trips/{trip_id}")

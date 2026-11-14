@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react';
-import { formatDuration, kphToMph } from '@wolfbox/telemetry';
+import { kphToMph } from '@wolfbox/telemetry';
 import type { ReviewTrip } from '../card.ts';
 import type { RoutePreview, TripStatsEntry } from '../tripStats.ts';
 import { selectTrips, tripDurationMs, type TripSort } from '../tripView.ts';
@@ -9,6 +9,8 @@ import { formatLocal, type TimeContext } from '../time.ts';
 import { metersToMiles } from '../units.ts';
 import { RiskRing, RiskReasons, BAND_LABEL } from './Risk.tsx';
 import type { ArchivedTrip } from '../archive.ts';
+import type { AutoSaveState } from '../autosave.ts';
+import { DriverTag, FlagGlyph } from './DriveNotes.tsx';
 
 const DAY: Intl.DateTimeFormatOptions = { weekday: 'long', month: 'short', day: 'numeric' };
 const CLOCK: Intl.DateTimeFormatOptions = { hour: 'numeric', minute: '2-digit' };
@@ -23,8 +25,10 @@ const CLOCK: Intl.DateTimeFormatOptions = { hour: 'numeric', minute: '2-digit' }
  * anything. Opening a card goes to the review screen for that drive.
  */
 export function DriveOverview({
-  drives, events, stats, sort, onSortChange, onOpen, time, theme, source = 'card', archived, onImport,
+  drives, events, stats, sort, onSortChange, onOpen, time, theme, source = 'card', archived, onImport, autoSave,
 }: {
+  /** Saving every card drive to history: its switch, and how far it has got. */
+  autoSave?: { on: boolean; onToggle: (on: boolean) => void; state: AutoSaveState; saved: number };
   source?: 'card' | 'archive';
   /** What the archive holds, by trip id, when there is an archive. */
   archived?: ReadonlyMap<string, ArchivedTrip>;
@@ -41,16 +45,25 @@ export function DriveOverview({
 }) {
   const [band, setBand] = useState<BandFilter>('all');
   const [showEvents, setShowEvents] = useState(false);
-  /** '' for everyone, 'none' for drives with no driver set, else a driver's name. */
+  /** '' for everyone, 'none' for drives with no driver set, 'flagged' for flagged drives, else a driver's name. */
   const [driver, setDriver] = useState('');
+  // A card drive's driver and flag live on its copy in history.
+  const copyOf = (trip: ReviewTrip) => archived?.get(trip.id) ?? trip.archived;
   const driverNames = useMemo(
-    () => [...new Set(drives.map((trip) => trip.archived?.driverName).filter((n): n is string => !!n))].sort(),
-    [drives],
+    () => [...new Set(drives.map((trip) => copyOf(trip)?.driverName).filter((n): n is string => !!n))].sort(),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [drives, archived],
   );
-  const byDriver = (trip: ReviewTrip) => !driver
-    || (driver === 'none' ? !trip.archived?.driverName : trip.archived?.driverName === driver);
+  const flaggedCount = drives.filter((trip) => copyOf(trip)?.flagged).length;
+  const byDriver = (trip: ReviewTrip) => {
+    const copy = copyOf(trip);
+    if (!driver) return true;
+    if (driver === 'flagged') return !!copy?.flagged;
+    return driver === 'none' ? !copy?.driverName : copy?.driverName === driver;
+  };
 
-  const shown = useMemo(() => drives.filter(byDriver), [drives, driver]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  const shown = useMemo(() => drives.filter(byDriver), [drives, driver, archived]);
   const totals = useMemo(() => cardTotals(shown.map((d) => d.id), stats), [shown, stats]);
   const visible = useMemo(() => selectTrips(shown, [], 'drives', sort, (trip) => {
     const entry = stats.get(trip.id);
@@ -86,6 +99,7 @@ export function DriveOverview({
                   : 'No high-risk drives'}
             </strong>
             {progress && <span className="hero-progress">{progress}</span>}
+            {autoSave && <AutoSaveLine {...autoSave} total={totals.drives} />}
           </div>
         </div>
         <dl className="kpis">
@@ -117,13 +131,14 @@ export function DriveOverview({
             </button>
           ))}
         </div>
-        {source === 'archive' && (
+        {(archived || driverNames.length > 0) && (
           <label className="sort">
             Driver
             <select value={driver} onChange={(event) => setDriver(event.target.value)}>
               <option value="">Everyone</option>
               {driverNames.map((name) => <option key={name} value={name}>{name}</option>)}
               <option value="none">Not assigned</option>
+              {flaggedCount > 0 && <option value="flagged">Flagged ({flaggedCount})</option>}
             </select>
           </label>
         )}
@@ -133,7 +148,7 @@ export function DriveOverview({
             <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true">
               <path d="M8 2 V10 M4.5 6.5 L8 10 L11.5 6.5 M3 13.5 H13" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />
             </svg>
-            Save to archive…
+            Save video…
           </button>
         )}
         <label className="sort">
@@ -162,7 +177,7 @@ export function DriveOverview({
               <DriveCard
                 key={trip.id} trip={trip} entry={stats.get(trip.id)}
                 time={time} theme={theme} showDay={!grouped}
-                saved={source === 'card' ? archived?.get(trip.id) : undefined}
+                copy={copyOf(trip)}
                 onOpen={() => onOpen(trip)}
               />
             ))}
@@ -189,6 +204,31 @@ export function DriveOverview({
         </section>
       )}
     </div>
+  );
+}
+
+/**
+ * How much of the card is in history. Saving is automatic and data-only, so
+ * this is a status line with an off switch, not a task to remember.
+ */
+function AutoSaveLine({
+  on, onToggle, state, saved, total,
+}: { on: boolean; onToggle: (on: boolean) => void; state: AutoSaveState; saved: number; total: number }) {
+  const text = !on
+    ? `${saved} of ${total} drives in history · auto-save off`
+    : state.current
+      ? `Saving to history · ${saved} of ${total}`
+      : saved >= total
+        ? `All ${total} drives saved to history`
+        : `${saved} of ${total} drives in history`;
+  return (
+    <span className="hero-progress autosave-line">
+      <span className={on ? 'autosave-dot autosave-dot--on' : 'autosave-dot'} aria-hidden="true" />
+      <span title={state.lastError ?? undefined}>
+        {text}{state.failed > 0 ? ` · ${state.failed} failed` : ''}
+      </span>
+      <button className="link" onClick={() => onToggle(!on)}>{on ? 'Turn off' : 'Turn on'}</button>
+    </span>
   );
 }
 
@@ -221,11 +261,11 @@ function AverageRing({ score }: { score: number | null }) {
 }
 
 function DriveCard({
-  trip, entry, time, theme, showDay, saved, onOpen,
+  trip, entry, time, theme, showDay, copy, onOpen,
 }: {
   trip: ReviewTrip;
-  /** The archive's copy of a card drive, if it has been saved. */
-  saved?: ArchivedTrip;
+  /** The history's copy of this drive, if it has one: driver, flag, notes, video. */
+  copy?: ArchivedTrip;
   entry?: TripStatsEntry;
   time: TimeContext;
   theme: Theme;
@@ -254,13 +294,12 @@ function DriveCard({
           {band && <span className={`band-label band-label--${band}`}>{BAND_LABEL[band]}</span>}
           {trip.hasEvent && <span className="badge badge--warn">event</span>}
         </div>
-        {(saved || trip.archived) && (
+        {copy && (copy.driverName || copy.flagged || copy.notes || copy.clips.some((c) => c.stored)) && (
           <span className="drive-card-tags">
-            {saved && <span className="tag tag--saved">Saved{saved.clips.some((c) => c.stored) ? ' · video' : ''}</span>}
-            {trip.archived?.driverName && <span className="tag tag--driver">{trip.archived.driverName}</span>}
-            {trip.archived && (
-              <span className="tag">{trip.archived.clips.some((c) => c.stored) ? 'Video' : 'Data only'}</span>
-            )}
+            {copy.driverName && <DriverTag name={copy.driverName} />}
+            {copy.flagged && <span className="tag tag--flag"><FlagGlyph /> Flagged</span>}
+            {copy.clips.some((c) => c.stored) && <span className="tag tag--saved">Video saved</span>}
+            {copy.notes && <span className="drive-card-note" title={copy.notes}>“{copy.notes}”</span>}
           </span>
         )}
         {route && <span className="drive-card-route">{route}</span>}
@@ -270,10 +309,6 @@ function DriveCard({
               <span>{metersToMiles(ready.distanceMeters).toFixed(1)} mi</span>
               <span>{minutes} min</span>
               <span>{Math.round(kphToMph(ready.maxSpeedKph))} mph top</span>
-              <span>{Math.round(kphToMph(ready.averageMovingSpeedKph))} avg</span>
-              {ready.risk?.speeding && ready.risk.speeding.stretchSec > 0 && (
-                <span className="trip-figures-over">{formatDuration(ready.risk.speeding.stretchSec)} over</span>
-              )}
             </>
           ) : <span>{minutes} min</span>}
         </span>
