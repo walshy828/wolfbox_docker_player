@@ -4,6 +4,22 @@ import {
 } from '@wolfbox/telemetry';
 import { formatAbsolute, type TimeContext } from '../time.ts';
 import { buildMoments, nearestIndex, neighbourMoment, speedPath, limitPath, type Moment } from '../timeline.ts';
+import type { MomentKind } from './SummaryPanel.tsx';
+
+/** One clip's span on the drive's clock, for the lane under the trace. */
+export interface TimelineClip {
+  startMs: number;
+  endMs: number;
+  /** An event clip: the camera saved it on a bump or a button press. */
+  event: boolean;
+}
+
+const KIND_NOUN: Record<Exclude<MomentKind, 'all'>, [string, string]> = {
+  speeding: ['speeding stretch', 'speeding stretches'],
+  braking: ['hard stop', 'hard stops'],
+  acceleration: ['hard launch', 'hard launches'],
+  cornering: ['sharp turn', 'sharp turns'],
+};
 
 /**
  * The whole drive along one strip under the video: speed as a filled trace,
@@ -22,6 +38,7 @@ const H = 56;
 
 export function DriveTimeline({
   points, events, stretches, limitKph, cursorMs, time, onSeek, onHighlight, selectedKey,
+  clips = [], clipIndex = 0, onSelectClip, kind = 'all', onKindChange,
 }: {
   points: CleanPoint[];
   events: HarshEvent[];
@@ -33,6 +50,17 @@ export function DriveTimeline({
   onSeek: (timestampMs: number) => void;
   onHighlight: (range: { startMs: number; endMs: number }, key: string) => void;
   selectedKey?: string | null;
+  /**
+   * The drive's clips along the same axis. They used to be a separate grid of
+   * chips under the summary; here a clip is where it happened, beside the
+   * moments in it, and the one playing is lit.
+   */
+  clips?: TimelineClip[];
+  clipIndex?: number;
+  onSelectClip?: (index: number) => void;
+  /** Narrows the markers and the previous/next steps to one kind of moment. */
+  kind?: MomentKind;
+  onKindChange?: (kind: MomentKind) => void;
 }) {
   const trackRef = useRef<HTMLDivElement>(null);
   const [hoverMs, setHoverMs] = useState<number | null>(null);
@@ -51,7 +79,11 @@ export function DriveTimeline({
     };
   }, [points, limitKph, startMs, span]);
 
-  const moments = useMemo(() => buildMoments(events, stretches, startMs), [events, stretches, startMs]);
+  const allMoments = useMemo(() => buildMoments(events, stretches, startMs), [events, stretches, startMs]);
+  const moments = useMemo(
+    () => (kind === 'all' ? allMoments : allMoments.filter((moment) => moment.kind === kind)),
+    [allMoments, kind],
+  );
 
   // `[` and `]` step through moments from anywhere on the page, not only with
   // the timeline focused -- the video usually has focus while reviewing.
@@ -95,8 +127,15 @@ export function DriveTimeline({
     <div className="timeline">
       <div className="timeline-head">
         <span className="timeline-title">
-          {moments.length === 0 ? 'Nothing flagged on this drive' : `${moments.length} moment${moments.length === 1 ? '' : 's'} to review`}
+          {kind === 'all'
+            ? (moments.length === 0 ? 'Nothing flagged on this drive' : `${moments.length} moment${moments.length === 1 ? '' : 's'} to review`)
+            : `${moments.length} ${KIND_NOUN[kind][moments.length === 1 ? 0 : 1]}`}
         </span>
+        {kind !== 'all' && onKindChange && (
+          <button className="chip chip--filter" onClick={() => onKindChange('all')} title="Show every kind of moment">
+            Show all {allMoments.length} &times;
+          </button>
+        )}
         <span className="timeline-legend" aria-hidden="true">
           <span className="timeline-key timeline-key--speed">Speed</span>
           {limit && <span className="timeline-key timeline-key--limit">Limit</span>}
@@ -134,7 +173,7 @@ export function DriveTimeline({
           {limit && <path className="timeline-limit" d={limit} />}
         </svg>
 
-        {moments.map((moment) => (
+        {allMoments.map((moment) => (
           <button
             key={moment.key}
             className={[
@@ -142,6 +181,7 @@ export function DriveTimeline({
               `timeline-mark--${moment.kind}`,
               `timeline-mark--${moment.severity}`,
               moment.key === selectedKey ? 'selected' : '',
+              kind !== 'all' && moment.kind !== kind ? 'timeline-mark--dim' : '',
             ].join(' ')}
             style={{ left: pct(moment.startMs) }}
             title={`${moment.label} at ${clock(moment.startMs)}`}
@@ -162,6 +202,29 @@ export function DriveTimeline({
           </span>
         )}
       </div>
+
+      {clips.length > 1 && (
+        <div className="timeline-clips" role="group" aria-label="Clips in this drive">
+          {clips.map((clip, index) => (
+            <button
+              key={clip.startMs}
+              className={[
+                'timeline-clip',
+                index === clipIndex ? 'current' : '',
+                clip.event ? 'timeline-clip--event' : '',
+              ].join(' ')}
+              style={{
+                left: pct(Math.max(startMs, clip.startMs)),
+                width: `calc(${((Math.min(endMs, clip.endMs) - Math.max(startMs, clip.startMs)) / span) * 100}% - 2px)`,
+              }}
+              aria-current={index === clipIndex}
+              title={`Clip ${index + 1} of ${clips.length} · ${clock(clip.startMs)}${clip.event ? ' · event' : ''}`}
+              aria-label={`Clip ${index + 1}, ${clock(clip.startMs)}`}
+              onClick={() => onSelectClip?.(index)}
+            />
+          ))}
+        </div>
+      )}
 
       <div className="timeline-axis" aria-hidden="true">
         <span>{clock(startMs)}</span>

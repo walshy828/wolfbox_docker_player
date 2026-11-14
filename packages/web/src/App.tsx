@@ -21,7 +21,6 @@ import { detectPlaybackMode, setPlaybackMode, type PlaybackMode } from './codec.
 import { TripList, type TripFilter, type TripSort } from './components/TripList.tsx';
 import { RouteMap } from './components/RouteMap.tsx';
 import { DualPlayer } from './components/DualPlayer.tsx';
-import { ClipStrip } from './components/ClipStrip.tsx';
 import { DriveTimeline } from './components/DriveTimeline.tsx';
 import { DriveOverview } from './components/DriveOverview.tsx';
 import { ImportSheet } from './components/ImportSheet.tsx';
@@ -29,8 +28,9 @@ import { HistoryView } from './components/HistoryView.tsx';
 import { ConfirmInline } from './components/ConfirmInline.tsx';
 import { SummaryPanel, type MomentKind } from './components/SummaryPanel.tsx';
 import { MomentsPanel } from './components/MomentsPanel.tsx';
-import { DriveNotes } from './components/DriveNotes.tsx';
-import { GForceMeter } from './components/GForceMeter.tsx';
+import { DriveActions } from './components/DriveNotes.tsx';
+import { SpeedHud } from './components/SpeedHud.tsx';
+import type { TimelineClip } from './components/DriveTimeline.tsx';
 import { SpeedRamp, SpeedBands } from './components/SpeedLegend.tsx';
 import { CollapsibleSection } from './components/CollapsibleSection.tsx';
 import { ExpandButton } from './components/ExpandButton.tsx';
@@ -47,11 +47,29 @@ import type { Theme } from './speedScale.ts';
 type CameraLayout = 'split' | 'pip' | 'front' | 'rear';
 
 const LAYOUT_LABEL: Record<CameraLayout, [string, string]> = {
-  split: ['Both', 'Front and rear side by side'],
   pip: ['PiP', 'Front, with the rear camera inset'],
+  split: ['Both', 'Front and rear side by side'],
   front: ['Front', 'Front camera only'],
   rear: ['Rear', 'Rear camera only'],
 };
+
+const LAYOUT_KEY = 'wolfbox.cameraLayout';
+
+/** The camera layout, remembered across sessions. Picture-in-picture by default: the biggest front view that still shows the rear. */
+function useCameraLayout(): [CameraLayout, (next: CameraLayout) => void] {
+  const [layout, setLayout] = useState<CameraLayout>(() => {
+    try {
+      const stored = localStorage.getItem(LAYOUT_KEY);
+      if (stored && stored in LAYOUT_LABEL) return stored as CameraLayout;
+    } catch { /* private window */ }
+    return 'pip';
+  });
+  const update = useCallback((next: CameraLayout) => {
+    setLayout(next);
+    try { localStorage.setItem(LAYOUT_KEY, next); } catch { /* not essential */ }
+  }, []);
+  return [layout, update];
+}
 
 /** Which panel, if any, is filling the window. */
 type Expanded = 'video' | 'map' | null;
@@ -82,7 +100,7 @@ export function App() {
   >(null);
   const seekToken = useRef(0);
   const [mode, setMode] = useState<PlaybackMode | null>(null);
-  const [layout, setLayout] = useState<CameraLayout>('split');
+  const [layout, setLayout] = useCameraLayout();
   const [filter, setFilter] = useState<TripFilter>('drives');
   const [sort, setSort] = useState<TripSort>('newest');
   /** The overview leads with the drives worth watching. */
@@ -429,6 +447,25 @@ export function App() {
 
   const openTrip = useCallback((next: ReviewTrip) => { setTrip(next); setView('review'); }, []);
 
+  // Each clip's span on the drive's clock, for the lane under the timeline.
+  const timelineClips = useMemo((): TimelineClip[] => {
+    if (!track || !trip) return [];
+    const endMs = track.points.at(-1)?.timestampMs ?? 0;
+    const clips: TimelineClip[] = [];
+    track.clipStarts.forEach((starts, index) => {
+      const startMs = starts.front ?? starts.rear;
+      if (startMs === undefined || !Number.isFinite(startMs)) return;
+      const next = track.clipStarts.slice(index + 1).map((s) => s.front ?? s.rear).find((ms) => ms !== undefined && Number.isFinite(ms));
+      clips[index] = { startMs, endMs: next ?? endMs, event: trip.clips[index]?.kind === 'event' };
+    });
+    return clips;
+  }, [track, trip]);
+
+  /** A scorecard tile narrows the moments to its kind; tapping it again shows them all. */
+  const showMoments = useCallback((kind: MomentKind) => {
+    setMomentKind((current) => (current === kind ? 'all' : kind));
+  }, []);
+
   // The list's own order, so stepping goes where the eye expects.
   const ordered = useMemo(() => selectTrips(drives, events, filter, sort, (t) => {
     const entry = tripStats.get(t.id);
@@ -609,75 +646,81 @@ export function App() {
           </PanelDock>
 
           <section className={panelClass('workspace', expanded === 'video')}>
-            <div className="panel-head">
-              <h2>
-                {trip
-                  ? formatLocal(trip.startLocalMs, time,
-                      { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })
-                  : 'No trip selected'}
-              </h2>
-              {trip && position >= 0 && (
-                <div className="step-trip" role="group" aria-label="Other drives">
+            {/*
+              One row: which drive, what to do about it, how to show it. The
+              live readouts moved onto the video, and driver / flag / notes
+              collapsed into buttons here, so the picture gets the height.
+            */}
+            <div className="panel-head review-head">
+              <div className="review-title">
+                {trip && position >= 0 && (
                   <button className="icon-toggle" disabled={position <= 0} onClick={() => stepTrip(-1)} title="Previous drive in the list" aria-label="Previous drive">
                     <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true"><path d="M10 3 L5 8 L10 13" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" /></svg>
                   </button>
-                  <span className="step-trip-count">{position + 1} / {ordered.length}</span>
-                  <button className="icon-toggle" disabled={position >= ordered.length - 1} onClick={() => stepTrip(1)} title="Next drive in the list" aria-label="Next drive">
-                    <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true"><path d="M6 3 L11 8 L6 13" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" /></svg>
-                  </button>
-                </div>
+                )}
+                <h2>
+                  {trip
+                    ? formatLocal(trip.startLocalMs, time,
+                        { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })
+                    : 'No trip selected'}
+                </h2>
+                {trip && position >= 0 && (
+                  <>
+                    <button className="icon-toggle" disabled={position >= ordered.length - 1} onClick={() => stepTrip(1)} title="Next drive in the list" aria-label="Next drive">
+                      <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true"><path d="M6 3 L11 8 L6 13" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" /></svg>
+                    </button>
+                    <span className="step-trip-count">{position + 1}/{ordered.length}</span>
+                  </>
+                )}
+              </div>
+
+              {trip && archiveOn && !isParkingEvent(trip) && (
+                <DriveActions
+                  key={trip.id}
+                  copy={archivedTrip ?? savedCopy}
+                  drivers={drivers}
+                  onChange={annotate}
+                  onAddDriver={createDriver}
+                  saved={(archivedTrip ?? savedCopy)
+                    ? ((archivedTrip ?? savedCopy)!.clips.some((clip) => clip.stored) ? 'video' : 'data')
+                    : 'none'}
+                  status={archivedTrip
+                    ? (archivedTrip.clips.some((clip) => clip.stored) ? 'In history, with video' : 'In history · data only')
+                    : savedCopy
+                      ? (savedCopy.clips.some((c) => c.stored) ? 'In history, with video' : 'In history · data only, video on card')
+                      : autoSaveOn ? 'Saving to history…' : 'Not in history yet: setting a driver, flag or note saves it'}
+                  actions={archivedTrip ? (
+                    confirmRemove ? (
+                      <ConfirmInline
+                        question="this drive from the archive, with any saved video?"
+                        busy={false}
+                        onConfirm={() => void removeFromArchive(trip.id)}
+                        onCancel={() => setConfirmRemove(false)}
+                      />
+                    ) : (
+                      <button className="link danger-link" onClick={(event) => { event.stopPropagation(); setConfirmRemove(true); }}>Remove from history…</button>
+                    )
+                  ) : !savedCopy?.clips.some((c) => c.stored) ? (
+                    <button className="link" onClick={() => setImporting({ preselected: [trip.id] })}>Save video to history…</button>
+                  ) : null}
+                />
               )}
+
+              <span className="spacer" />
               {trip && (
-                <div className="layout-controls" role="group" aria-label="Camera layout">
+                <div className="segmented layout-switch" role="group" aria-label="Camera layout">
                   {(Object.keys(LAYOUT_LABEL) as CameraLayout[]).map((option) => (
                     <button
                       key={option}
-                      className={layout === option ? 'chip selected' : 'chip'}
+                      className={layout === option ? 'selected' : ''}
                       onClick={() => setLayout(option)}
                       aria-pressed={layout === option}
                       title={LAYOUT_LABEL[option][1]}
+                      aria-label={LAYOUT_LABEL[option][1]}
                     >
-                      {LAYOUT_LABEL[option][0]}
+                      <LayoutIcon layout={option} />
                     </button>
                   ))}
-                </div>
-              )}
-              <span className="spacer" />
-              {trip && (
-                <div className="readout-main">
-                  <div className="readout-speed-block">
-                    <span
-                      className={roadLimit?.severity
-                        ? `readout-speed readout-speed--${roadLimit.severity}` : 'readout-speed'}
-                    >
-                      {current ? current.speedMph.toFixed(0) : '--'}
-                      <small>mph</small>
-                    </span>
-                    <span className="readout-limit">
-                      {roadLimit
-                        ? (Number.isFinite(roadLimit.limitMph)
-                            ? `${roadLimit.limitMph.toFixed(0)} mph limit`
-                            : 'No limit')
-                        : 'Limit unknown'}
-                    </span>
-                  </div>
-                  <span className="readout-when">
-                    {atMs === null ? (
-                      <span className="readout-clock">--:--</span>
-                    ) : (
-                      <>
-                        <span className="readout-clock">
-                          {formatAbsolute(atMs, time,
-                            { hour: 'numeric', minute: '2-digit', second: '2-digit' })}
-                        </span>
-                        <span className="readout-date">
-                          {formatAbsolute(atMs, time,
-                            { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric' })}
-                        </span>
-                      </>
-                    )}
-                  </span>
-                  <GForceMeter points={track?.points ?? []} clockMs={clockMs} theme={theme} />
                 </div>
               )}
               {trip && (
@@ -696,35 +739,16 @@ export function App() {
                 seekRequest={seekRequest}
                 onClock={setClockMs} layout={layout}
                 onDeleteClip={canDelete ? deleteClipAt : undefined} deleting={deleting}
-              />
-            )}
-
-            {trip && archiveOn && !isParkingEvent(trip) && (
-              <DriveNotes
-                key={trip.id}
-                copy={archivedTrip ?? savedCopy}
-                drivers={drivers}
-                onChange={annotate}
-                onAddDriver={createDriver}
-                status={archivedTrip
-                  ? (archivedTrip.clips.some((clip) => clip.stored) ? 'In history, with video' : 'In history · data only')
-                  : savedCopy
-                    ? (savedCopy.clips.some((c) => c.stored) ? 'In history, with video' : 'In history · data only, video on card')
-                    : autoSaveOn ? 'Saving to history…' : 'Not in history yet: setting a driver, flag or note saves it'}
-                actions={archivedTrip ? (
-                  confirmRemove ? (
-                    <ConfirmInline
-                      question="this drive from the archive, with any saved video?"
-                      busy={false}
-                      onConfirm={() => void removeFromArchive(trip.id)}
-                      onCancel={() => setConfirmRemove(false)}
-                    />
-                  ) : (
-                    <button className="link danger-link" onClick={() => setConfirmRemove(true)}>Remove from history</button>
-                  )
-                ) : !savedCopy?.clips.some((c) => c.stored) ? (
-                  <button className="link" onClick={() => setImporting({ preselected: [trip.id] })}>Save video…</button>
-                ) : null}
+                hud={(
+                  <SpeedHud
+                    speedMph={current?.speedMph}
+                    severity={roadLimit?.severity}
+                    limitMph={roadLimit?.limitMph}
+                    limitKnown={roadLimit !== undefined}
+                    atMs={atMs} time={time}
+                    points={track?.points ?? []} clockMs={clockMs}
+                  />
+                )}
               />
             )}
 
@@ -736,6 +760,8 @@ export function App() {
                 limitKph={limits?.adherence.limitKph}
                 cursorMs={clockMs} time={time} onSeek={seek}
                 onHighlight={onHighlight} selectedKey={highlight?.key}
+                clips={timelineClips} clipIndex={clipIndex} onSelectClip={setClipIndex}
+                kind={momentKind} onKindChange={setMomentKind}
               />
             )}
 
@@ -749,17 +775,8 @@ export function App() {
                 <SummaryPanel
                   summary={track.summary} theme={theme} time={time}
                   limitStatus={limitStatus} risk={risk}
-                  onShowMoments={(kind) => {
-                    setMomentKind(kind);
-                    // The list lives beside the map; bring it on screen if the map is tucked away.
-                    document.querySelector('.moments')?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
-                  }}
-                />
-              )}
-              {trip && (
-                <ClipStrip
-                  trip={trip} clipIndex={clipIndex} onSelect={setClipIndex}
-                  onDelete={canDelete ? deleteClipAt : undefined} deleting={deleting} time={time}
+                  activeKind={momentKind}
+                  onShowMoments={showMoments}
                 />
               )}
             </div>
@@ -852,6 +869,19 @@ function BrandMark({ size = 28 }: { size?: number }) {
       <path d="M8 20.5 C11 13, 16 11.5, 24 12" fill="none" stroke="#fff" strokeWidth="2.6" strokeLinecap="round" />
       <circle cx="24" cy="12" r="2.6" fill="#fff" />
       <circle cx="8" cy="20.5" r="2" fill="#fff" opacity="0.7" />
+    </svg>
+  );
+}
+
+/** A small sketch of each camera layout, for the switch in the review header. */
+function LayoutIcon({ layout }: { layout: CameraLayout }) {
+  const frame = { fill: 'none', stroke: 'currentColor', strokeWidth: 1.4 } as const;
+  return (
+    <svg viewBox="0 0 20 14" width="20" height="14" aria-hidden="true">
+      {layout === 'split' && <><rect x="1" y="2" width="8" height="10" rx="1.5" {...frame} /><rect x="11" y="2" width="8" height="10" rx="1.5" {...frame} /></>}
+      {layout === 'pip' && <><rect x="1" y="1" width="18" height="12" rx="1.5" {...frame} /><rect x="12" y="3" width="5" height="3.5" rx="0.8" fill="currentColor" /></>}
+      {layout === 'front' && <><rect x="1" y="1" width="18" height="12" rx="1.5" {...frame} /><text x="10" y="10" fontSize="7.5" fontWeight="700" textAnchor="middle" fill="currentColor">F</text></>}
+      {layout === 'rear' && <><rect x="1" y="1" width="18" height="12" rx="1.5" {...frame} /><text x="10" y="10" fontSize="7.5" fontWeight="700" textAnchor="middle" fill="currentColor">R</text></>}
     </svg>
   );
 }

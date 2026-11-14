@@ -404,7 +404,7 @@ select {
    cap disagree inside a grid track, since the track sizes to the
    aspect-ratio height and the cap only clips the video after that. */
 .workspace > .player {
-  padding: 16px 16px 0; flex: 0 1 auto; min-height: 0; max-height: 55vh;
+  padding: 12px 12px 0; flex: 0 1 auto; min-height: 0; max-height: 64vh;
   display: flex; flex-direction: column;
 }
 .workspace-scroll {
@@ -533,7 +533,6 @@ select {
 .player-status--error { color: var(--danger); }
 .player-empty { padding: 32px; color: var(--ink-muted); }
 
-.layout-controls { display: flex; gap: 6px; }
 .chip { border-radius: 999px; font-size: 13px; padding: 4px 12px; }
 .chip.selected, .chip.selected:hover:not(:disabled) { background: var(--accent-fill); color: var(--accent-ink); }
 
@@ -616,7 +615,6 @@ select {
 .data-table caption { text-align: left; color: var(--ink-muted); font-size: 12px; padding-bottom: 6px; }
 .data-table th, .data-table td { text-align: left; padding: 6px 10px; border-bottom: 1px solid var(--border); }
 .data-table td { font-variant-numeric: tabular-nums; }
-.summary-window { font-size: 13px; color: var(--ink-muted); margin: 0; }
 
 /* --- map ------------------------------------------------------------- */
 .map-column {
@@ -629,21 +627,6 @@ select {
   padding: 16px; display: grid; gap: 16px; align-content: start;
   border-top: 1px solid var(--border);
 }
-.readout-main { display: flex; align-items: center; gap: 8px; }
-.readout-speed-block { display: grid; gap: 1px; line-height: 1; }
-.readout-speed { font-size: 34px; font-weight: 650; font-variant-numeric: tabular-nums; line-height: 1; }
-.readout-speed small { font-size: 14px; font-weight: 400; color: var(--ink-muted); margin-left: 4px; }
-/* Tints the number itself once the sustained excess over the road's limit is
-   enough to count as a stretch -- same colours as the stretch/harsh-event badges. */
-.readout-speed--moderate { color: var(--warn); }
-.readout-speed--severe { color: var(--danger); }
-/* Right below the speed: the limit of the road the car is currently on. */
-.readout-limit { font-size: 11px; color: var(--ink-muted); white-space: nowrap; }
-/* Sits beside the speed: the moment those numbers describe. */
-.readout-when { display: grid; gap: 1px; line-height: 1.15; margin-left: 4px; white-space: nowrap; }
-@media (max-width: 1500px) { .readout-date { display: none; } }
-.readout-clock { font-size: 17px; font-weight: 600; font-variant-numeric: tabular-nums; }
-.readout-date { font-size: 11px; color: var(--ink-muted); }
 /* The GPS coordinates, tucked into the map panel head next to its title. */
 .readout-position {
   font-size: 11px; color: var(--ink-muted); font-variant-numeric: tabular-nums;
@@ -651,7 +634,7 @@ select {
 }
 
 /* Live braking/accel and lateral force, beside the speed readout: a bullseye, dot deflecting toward the combined g-vector. */
-.gforce-meter { flex-shrink: 0; margin-left: 10px; overflow: visible; }
+.gforce-meter { flex-shrink: 0; overflow: visible; }
 .gforce-ring { fill: none; stroke: var(--border); stroke-width: 1; }
 .gforce-axis { stroke: var(--border); stroke-width: 1; }
 /* Lateral is not independently validated (see accel.ts) -- dashed so it doesn't read with the same confidence as the braking/accel axis. */
@@ -735,37 +718,6 @@ button.danger:hover:not(:disabled) { background: var(--danger); color: var(--acc
 .trip-delete { flex: none; opacity: 0; }
 .trip-row:hover .trip-delete, .trip-delete:focus-visible { opacity: 1; }
 
-.clip-strip ol {
-  list-style: none; margin: 0; padding: 0; display: grid; gap: 6px;
-  /* Sized to the widest a chip's label gets -- "12:31:21 AM" plus its ordinal
-     -- so the time never wraps and the columns stay even across the row. */
-  grid-template-columns: repeat(auto-fill, minmax(11rem, 1fr));
-}
-/* The trash can is layered over the chip rather than beside it: at this size a
-   second column would squeeze the time onto two lines, and the row of chips
-   reads as a strip of times, not a row of buttons. */
-.clip-chip { position: relative; display: flex; }
-.clip-chip > button {
-  flex: 1; min-width: 0; display: grid; gap: 2px; text-align: left;
-  grid-template-columns: auto 1fr; align-items: baseline;
-  padding: 6px 30px 6px 8px; font-size: 13px;
-}
-.clip-chip.current > button { border-color: var(--accent); background: var(--surface-sunken); }
-.clip-index {
-  grid-row: span 2; font-size: 11px; color: var(--ink-muted);
-  font-variant-numeric: tabular-nums; min-width: 2ch;
-}
-.clip-when { font-variant-numeric: tabular-nums; font-weight: 600; white-space: nowrap; }
-.clip-meta { font-size: 12px; color: var(--ink-muted); display: flex; gap: 6px; align-items: center; }
-.clip-chip .icon-button { position: absolute; top: 3px; right: 3px; opacity: 0; }
-.clip-chip:hover .icon-button, .clip-chip .icon-button:focus-visible { opacity: 1; }
-/* Nothing hovers on a touch screen, so there the trash can always shows. */
-@media (hover: none) {
-  .clip-chip .icon-button { opacity: 1; }
-}
-/* The confirmation is wider than a chip; let it take the whole row rather than
-   blowing out every column to fit it. */
-.clip-strip li:has(.confirm-inline) { grid-column: 1 / -1; }
 
 /* --- vehicle marker --------------------------------------------------- */
 .route-map-wrap { position: relative; min-height: 0; }
@@ -1295,17 +1247,6 @@ input:not([type]):focus-visible { outline: 2px solid var(--accent); outline-offs
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
 
-.drive-notes {
-  display: grid; gap: 8px; padding: 10px 14px; border-bottom: 1px solid var(--border); font-size: 13px;
-}
-.drive-notes-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
-.drive-notes-label { font-size: 12px; font-weight: 600; color: var(--ink-muted); }
-.driver-chips { display: flex; gap: 5px; flex-wrap: wrap; align-items: center; }
-.driver-chips .chip, .chip--flag { padding: 3px 11px; }
-.chip--ghost { background: none; border: 1px dashed var(--border); color: var(--ink-secondary); }
-.chip--flag { display: inline-flex; align-items: center; gap: 5px; }
-.chip--flag.selected, .chip--flag.selected:hover:not(:disabled) { background: var(--warn); color: #fff; }
-.chip--flag.selected .flag-glyph { color: #fff; }
 .driver-add { display: inline-flex; gap: 4px; }
 .driver-add input { width: 12ch; padding: 3px 8px; font-size: 13px; }
 .drive-notes-text {
@@ -1314,7 +1255,6 @@ input:not([type]):focus-visible { outline: 2px solid var(--accent); outline-offs
   border: 1px solid var(--border); background: var(--surface-sunken); color: var(--ink);
 }
 .drive-notes-text:focus { outline: 2px solid var(--accent); outline-offset: -1px; background: var(--surface-raised); }
-.drive-notes-foot { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; font-size: 12px; }
 .drive-notes-ok { color: var(--ok); }
 .drive-notes-error { color: var(--danger); }
 .assign-select { padding: 3px 8px; font-size: 13px; }
@@ -1377,3 +1317,129 @@ button.issue-tile--link .issue-tile-label::after { content: ' ›'; color: var(-
 .drive-log-notes { max-width: 240px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-style: italic; }
 .drive-log-flag .flag-glyph { color: var(--ink-muted); opacity: 0.5; }
 .drive-log-flag.selected .flag-glyph { color: var(--warn); opacity: 1; }
+
+/* --- review header: drive, actions, layout ---------------------------- */
+.review-head { gap: 8px; padding: 8px 10px; flex-wrap: nowrap; container: review-head / inline-size; }
+.review-head > * { flex-shrink: 0; }
+.review-head > .drive-actions { flex-shrink: 1; }
+.review-title { display: flex; align-items: center; gap: 2px; min-width: 0; }
+.review-title h2 { padding: 0 4px; }
+/* A narrow workspace keeps one row: labels give way to their icons first. */
+@container review-head (max-width: 860px) {
+  .action-button--flag .action-label { display: none; }
+  .action-note-text { max-width: 12ch; }
+}
+@container review-head (max-width: 700px) {
+  .action-button .action-label { display: none; }
+  .step-trip-count { display: none; }
+}
+
+.drive-actions { display: flex; align-items: center; gap: 4px; min-width: 0; flex: 0 1 auto; }
+.popover-anchor { position: relative; display: flex; min-width: 0; }
+.popover-anchor--grow { flex: 0 1 auto; }
+.action-button {
+  display: inline-flex; align-items: center; gap: 6px; min-width: 0;
+  padding: 4px 10px; border-radius: 999px; font-size: 13px; font-weight: 500;
+  background: var(--fill); border: 1px solid transparent; color: var(--ink-secondary); white-space: nowrap;
+}
+.action-button:hover:not(:disabled) { background: var(--fill-hover); color: var(--ink); }
+.action-button.selected { color: var(--accent); background: color-mix(in srgb, var(--accent) 12%, transparent); }
+.action-button--flag.selected, .action-button--flag.selected:hover:not(:disabled) { background: var(--warn); color: #fff; }
+.action-button--flag.selected .flag-glyph { color: #fff; }
+.action-button--note.has-note { color: var(--ink); font-style: italic; font-weight: 400; }
+.action-note-text { overflow: hidden; text-overflow: ellipsis; max-width: 22ch; }
+.action-button svg { flex: none; }
+.action-button .caret { opacity: 0.6; }
+.drive-actions-status { font-size: 12px; min-width: 0; white-space: nowrap; }
+.history-button--none { color: var(--ink-muted); }
+.history-button--data, .history-button--video { color: var(--ok); }
+
+.popover {
+  position: absolute; top: calc(100% + 6px); left: 0; z-index: 960;
+  background: var(--surface-raised); border: 1px solid var(--border); border-radius: 12px;
+  -webkit-backdrop-filter: var(--glass-blur); backdrop-filter: var(--glass-blur);
+  box-shadow: var(--shadow-lift); padding: 6px;
+}
+.popover--right { left: auto; right: 0; }
+.popover--menu { min-width: 190px; display: grid; gap: 1px; }
+.popover--notes { width: min(380px, 80vw); display: grid; gap: 6px; padding: 8px; }
+.popover--notes .drive-notes-text { resize: vertical; min-height: 96px; }
+.popover-foot { display: flex; align-items: center; gap: 8px; font-size: 12px; }
+.menu-item {
+  display: flex; align-items: center; gap: 8px; width: 100%; text-align: left;
+  background: none; border: none; border-radius: 8px; padding: 6px 8px; font-size: 13px; font-weight: 400; color: var(--ink);
+}
+.menu-item:hover:not(:disabled) { background: var(--fill); }
+.menu-item--muted { color: var(--ink-muted); }
+.menu-check { width: 1em; color: var(--accent); font-weight: 700; text-align: center; }
+.menu-sep { height: 1px; background: var(--border); margin: 4px 2px; }
+.menu-status { margin: 2px 6px 6px; font-size: 12px; color: var(--ink-secondary); max-width: 260px; }
+.menu-actions { display: grid; gap: 4px; padding: 2px 6px 4px; font-size: 13px; }
+.popover .driver-add { padding: 2px 4px; }
+
+.layout-switch { flex: none; }
+.layout-switch button { padding: 4px 7px; line-height: 0; }
+
+/* --- the dash display over the video ---------------------------------- */
+.player-hud {
+  position: absolute; top: 10px; left: 10px; z-index: 2; pointer-events: none;
+  max-width: calc(100% - 20px);
+}
+/* Side by side, the HUD keeps to the front camera's half. */
+.player-hud--split { max-width: calc(50% - 24px); }
+.hud {
+  display: flex; align-items: center; gap: 10px;
+  padding: 6px 10px 6px 6px; border-radius: 14px;
+  background: rgb(10 12 18 / 0.55); color: #fff;
+  -webkit-backdrop-filter: blur(10px) saturate(140%); backdrop-filter: blur(10px) saturate(140%);
+  box-shadow: 0 4px 16px rgb(0 0 0 / 0.25);
+  transform-origin: top left;
+}
+.hud-limit {
+  display: grid; justify-items: center; align-content: center; gap: 0;
+  width: 40px; height: 48px; border-radius: 6px;
+  background: #fff; color: #111; border: 2px solid #111; box-shadow: 0 0 0 1.5px #fff;
+  line-height: 1;
+}
+.hud-limit-caption { font-size: 7.5px; font-weight: 800; letter-spacing: 0.06em; }
+.hud-limit-value { font: 800 21px/1.05 var(--font-display); font-variant-numeric: tabular-nums; }
+.hud-limit--unknown { opacity: 0.45; }
+.hud-main { display: grid; gap: 2px; line-height: 1; }
+.hud-speed { font: 700 32px/1 var(--font-display); font-variant-numeric: tabular-nums; letter-spacing: -0.02em; }
+.hud-speed small { font-size: 12px; font-weight: 500; opacity: 0.75; margin-left: 3px; letter-spacing: 0; }
+.hud-speed--moderate { color: #ffb340; }
+.hud-speed--severe { color: #ff6961; }
+.hud-clock { font-size: 12px; font-variant-numeric: tabular-nums; opacity: 0.85; white-space: nowrap; }
+.hud .gforce-ring, .hud .gforce-axis { stroke: rgb(255 255 255 / 0.35); }
+.hud .gforce-tick { fill: rgb(255 255 255 / 0.7); }
+.hud .gforce-dot { stroke: rgb(0 0 0 / 0.5); }
+.hud .gforce-meter { width: 52px; height: 52px; }
+/* Small players get a smaller HUD rather than one that covers the road. */
+@container stage (max-width: 560px) {
+  .hud { transform: scale(0.8); }
+}
+@container stage (max-width: 400px) {
+  .hud .gforce-meter { display: none; }
+}
+.player-stage { container: stage / inline-size; }
+
+/* --- timeline: clip lane, filtering ----------------------------------- */
+.timeline-clips { position: relative; height: 10px; margin-top: 2px; }
+.timeline-clip {
+  position: absolute; top: 0; bottom: 0; margin-left: 1px; padding: 0; min-width: 3px;
+  border: none; border-radius: 3px; background: var(--fill-hover); cursor: pointer;
+}
+.timeline-clip:hover:not(:disabled) { background: color-mix(in srgb, var(--accent) 45%, transparent); }
+.timeline-clip--event { background: color-mix(in srgb, var(--warn) 45%, transparent); }
+.timeline-clip.current, .timeline-clip.current:hover:not(:disabled) { background: var(--accent); }
+.timeline-mark--dim { opacity: 0.18; }
+.chip--filter { padding: 1px 9px; font-size: 12px; }
+
+/* --- summary, compacted ------------------------------------------------ */
+.summary { display: grid; gap: 12px; }
+.score-hero { flex-wrap: wrap; gap: 12px 14px; }
+.score-hero-text { flex: 1 1 180px; min-width: 0; font-size: 13px; }
+.stats--inline { display: flex; gap: 16px; flex-wrap: wrap; }
+.stats--inline dd { font-size: 17px; }
+.stats--inline .stats-when { font-size: 14px; font-weight: 500; }
+button.issue-tile--link.selected { border-color: currentColor; box-shadow: inset 0 0 0 1px currentColor; }

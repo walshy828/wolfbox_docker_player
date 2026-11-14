@@ -36,7 +36,7 @@ const GAUGE_CIRCUMFERENCE = 2 * Math.PI * 40;
 function ScoreGauge({ value, band }: { value: number; band: RiskBand }) {
   const offset = GAUGE_CIRCUMFERENCE * (1 - value / 100);
   return (
-    <svg className={`score-gauge score-gauge--${band}`} viewBox="0 0 100 100" width="88" height="88">
+    <svg className={`score-gauge score-gauge--${band}`} viewBox="0 0 100 100" width="68" height="68">
       <circle className="score-gauge-track" cx="50" cy="50" r="40" />
       <circle
         className="score-gauge-value" cx="50" cy="50" r="40"
@@ -57,13 +57,15 @@ export type MomentKind = 'all' | 'speeding' | 'braking' | 'acceleration' | 'corn
  * Tapping one opens the matching moments, so every number leads to footage.
  */
 function ScoreTile({
-  label, value, detail, tone, points, onClick,
+  label, value, detail, tone, points, onClick, active,
 }: {
   label: string; value: string; detail?: string;
   tone: 'ok' | 'warn' | 'danger' | 'muted';
   /** Points this cost the score; omitted when it cost none. */
   points?: number;
   onClick?: () => void;
+  /** This tile's moments are the ones being shown. */
+  active?: boolean;
 }) {
   const body = (
     <>
@@ -78,13 +80,23 @@ function ScoreTile({
     </>
   );
   return onClick
-    ? <button className={`issue-tile issue-tile--${tone} issue-tile--link`} onClick={onClick}>{body}</button>
+    ? (
+      <button
+        className={`issue-tile issue-tile--${tone} issue-tile--link${active ? ' selected' : ''}`}
+        aria-pressed={active} onClick={onClick}
+        title={active ? 'Show every moment again' : 'Show just these on the timeline and in the list'}
+      >
+        {body}
+      </button>
+    )
     : <div className={`issue-tile issue-tile--${tone}`}>{body}</div>;
 }
 
 /**
- * The drive at a glance: its score, the scorecard behind it, the basic
- * figures, and how the drive's time was spent across the speed bands.
+ * The drive at a glance: its score and basic figures on one line, then the
+ * scorecard behind it. How the time split across speed bands is folded away
+ * by default: it is rarely the question, and the timeline above already
+ * shows speed against the limit through the whole drive.
  *
  * Each factor appears once. The scorecard used to repeat itself -- a list of
  * the factors that cost points, then tiles for the same speeding and events,
@@ -98,13 +110,15 @@ function ScoreTile({
  * colour ramp stay legible without relying on colour alone.
  */
 export function SummaryPanel(
-  { summary, theme, time, limitStatus, risk, onShowMoments }: {
+  { summary, theme, time, limitStatus, risk, onShowMoments, activeKind = 'all' }: {
     summary: TripSummary;
     theme: Theme;
     time: TimeContext;
     limitStatus: LimitStatus;
     risk: DriveRisk | null;
     onShowMoments?: (kind: MomentKind) => void;
+    /** Which tile's moments are on show, so that tile reads as pressed. */
+    activeKind?: MomentKind;
   },
 ) {
   const clock = (ms: number) => formatAbsolute(ms, time, { hour: 'numeric', minute: '2-digit' });
@@ -124,6 +138,7 @@ export function SummaryPanel(
         tone={severe > 0 ? 'danger' : ofKind.length > 0 ? 'warn' : 'ok'}
         points={pointsFor(kind)}
         onClick={ofKind.length > 0 && onShowMoments ? () => onShowMoments(kind) : undefined}
+        active={activeKind === kind}
       />
     );
   };
@@ -152,6 +167,7 @@ export function SummaryPanel(
         tone={speeding.bySeverity.severe > 0 ? 'danger' : speeding.stretchCount > 0 ? 'warn' : 'ok'}
         points={pointsFor('speeding')}
         onClick={speeding.stretchCount > 0 && onShowMoments ? () => onShowMoments('speeding') : undefined}
+        active={activeKind === 'speeding'}
       />
     );
   })();
@@ -160,53 +176,55 @@ export function SummaryPanel(
   const fastSec = summary.histogramMph.at(-1) ?? 0;
 
   return (
-    <section className="summary">
-      <CollapsibleSection title="Drive summary">
-        <div className="score-hero">
-          <ScoreGauge value={risk?.score ?? 0} band={risk?.band ?? 'moderate'} />
-          <div className="score-hero-text">
-            {risk ? (
-              <>
-                <strong className={`score-hero-band score-hero-band--${risk.band}`}>
-                  {BAND_LABEL[risk.band]}
-                </strong>
-                <span className="muted">
-                  {risk.factors.length === 0
-                    ? (risk.includesSpeeding ? 'Nothing cost this drive points.' : 'Nothing has cost points so far.')
-                    : `Lost most for ${FACTOR_NOUN[risk.factors[0]!.key] ?? risk.factors[0]!.label}.`}
-                  {!risk.includesSpeeding && (limitStatus === 'loading'
-                    ? ' Speed limits still loading; speeding not yet counted.'
-                    : ' Speed limits unavailable; speeding not counted.')}
-                  {risk.cappedBy && ` Capped for ${risk.cappedBy}.`}
-                </span>
-              </>
-            ) : (
-              <span className="muted">Too short a drive to score.</span>
-            )}
-          </div>
+    <section className="summary" aria-label="Drive summary">
+      <div className="score-hero">
+        <ScoreGauge value={risk?.score ?? 0} band={risk?.band ?? 'moderate'} />
+        <div className="score-hero-text">
+          {risk ? (
+            <>
+              <strong className={`score-hero-band score-hero-band--${risk.band}`}>
+                {BAND_LABEL[risk.band]}
+              </strong>
+              <span className="muted">
+                {risk.factors.length === 0
+                  ? (risk.includesSpeeding ? 'Nothing cost this drive points.' : 'Nothing has cost points so far.')
+                  : `Lost most for ${FACTOR_NOUN[risk.factors[0]!.key] ?? risk.factors[0]!.label}.`}
+                {!risk.includesSpeeding && (limitStatus === 'loading'
+                  ? ' Speed limits still loading; speeding not yet counted.'
+                  : ' Speed limits unavailable; speeding not counted.')}
+                {risk.cappedBy && ` Capped for ${risk.cappedBy}.`}
+              </span>
+            </>
+          ) : (
+            <span className="muted">Too short a drive to score.</span>
+          )}
         </div>
-
-        <div className="issue-grid">
-          {speedingTile}
-          <ScoreTile
-            label="Top speed" value={`${topMph} mph`}
-            detail={fastSec > 0 ? `${formatDuration(fastSec)} at 80+` : undefined}
-            tone={topMph >= 90 ? 'danger' : topMph >= 80 ? 'warn' : 'ok'}
-            points={pointsFor('top-speed')}
-          />
-          {eventTile('braking', 'Hard stops')}
-          {eventTile('acceleration', 'Hard launches')}
-          {eventTile('cornering', 'Sharp turns')}
-        </div>
-
-        <dl className="stats">
+        {/* The basic figures, as one line beside the score: they frame the
+            drive but are rarely what anyone came to look at. */}
+        <dl className="stats stats--inline">
           <div><dt>Distance</dt><dd>{metersToMiles(summary.distanceMeters).toFixed(1)} <small>mi</small></dd></div>
-          <div><dt>Moving</dt><dd>{duration(summary.movingSec)} <small>of {duration(summary.durationSec)}</small></dd></div>
-          <div><dt>Avg moving</dt><dd>{kphToMph(summary.averageMovingSpeedKph).toFixed(0)} <small>mph</small></dd></div>
+          <div><dt>Moving</dt><dd>{duration(summary.movingSec)}</dd></div>
+          <div><dt>Avg</dt><dd>{kphToMph(summary.averageMovingSpeedKph).toFixed(0)} <small>mph</small></dd></div>
+          <div><dt>When</dt><dd className="stats-when">{clock(summary.startMs)}–{clock(summary.endMs)}</dd></div>
         </dl>
+      </div>
 
+      <div className="issue-grid">
+        {speedingTile}
+        <ScoreTile
+          label="Top speed" value={`${topMph} mph`}
+          detail={fastSec > 0 ? `${formatDuration(fastSec)} at 80+` : undefined}
+          tone={topMph >= 90 ? 'danger' : topMph >= 80 ? 'warn' : 'ok'}
+          points={pointsFor('top-speed')}
+        />
+        {eventTile('braking', 'Hard stops')}
+        {eventTile('acceleration', 'Hard launches')}
+        {eventTile('cornering', 'Sharp turns')}
+      </div>
+
+      <CollapsibleSection title="Time by speed" defaultOpen={false}>
         <div className="chart-head">
-          <h3>Time by speed <span className="muted">mph</span></h3>
+          <h3 className="muted">Speed bands, mph</h3>
           <button className="link" onClick={() => setAsTable((v) => !v)}>
             {asTable ? 'Show chart' : 'Show table'}
           </button>
@@ -247,10 +265,6 @@ export function SummaryPanel(
             ))}
           </ul>
         )}
-
-        <p className="summary-window">
-          {clock(summary.startMs)} to {clock(summary.endMs)}
-        </p>
       </CollapsibleSection>
     </section>
   );

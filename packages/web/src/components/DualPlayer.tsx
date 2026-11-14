@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState, type KeyboardEvent, type PointerEvent } from 'react';
+import { useCallback, useEffect, useRef, useState, type KeyboardEvent, type PointerEvent, type ReactNode } from 'react';
 import type { ReviewTrip } from '../card.ts';
 import type { PlaybackMode } from '../codec.ts';
 import { openClip, type ClipSource } from '../clipSource.ts';
@@ -67,6 +67,8 @@ interface Props {
   /** Absent for archived drives, whose clips are not on a card. */
   onDeleteClip?: (index: number) => void;
   deleting: boolean;
+  /** Readouts laid over the top-left of the picture; they never take clicks. */
+  hud?: ReactNode;
 }
 
 /**
@@ -80,7 +82,7 @@ interface Props {
  */
 export function DualPlayer({
   trip, clipStarts, mode, clipIndex, onClipIndexChange, seekRequest, onClock, layout,
-  onDeleteClip, deleting,
+  onDeleteClip, deleting, hud,
 }: Props) {
   const frontRef = useRef<HTMLVideoElement>(null);
   const rearRef = useRef<HTMLVideoElement>(null);
@@ -384,6 +386,8 @@ export function DualPlayer({
             <figcaption>Rear{sources.rear ? '' : ' - unavailable'}</figcaption>
           </figure>
         </div>
+
+        {hud && <div className={`player-hud player-hud--${layout}`}>{hud}</div>}
 
         {/*
           A transparent button the size of the whole stage: clicking or
