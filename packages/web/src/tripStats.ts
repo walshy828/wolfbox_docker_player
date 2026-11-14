@@ -28,7 +28,27 @@ export type TripStatsEntry =
        */
       limits: LimitsState;
       risk: DriveRisk | null;
+      /** A few dozen points of the route, for the overview's thumbnail map. */
+      route: RoutePreview;
     };
+
+/** Latitude, longitude and mph, thinned to at most `PREVIEW_POINTS` samples. */
+export type RoutePreview = [number, number, number][];
+const PREVIEW_POINTS = 80;
+
+/** Thins a track evenly by time, keeping both ends. */
+export function previewRoute(points: readonly { latitude: number; longitude: number; smoothedSpeedKph: number }[]): RoutePreview {
+  if (points.length === 0) return [];
+  const step = Math.max(1, (points.length - 1) / (PREVIEW_POINTS - 1));
+  const out: RoutePreview = [];
+  for (let i = 0; i < points.length - 1; i += step) {
+    const p = points[Math.floor(i)]!;
+    out.push([p.latitude, p.longitude, p.smoothedSpeedKph / 1.609344]);
+  }
+  const last = points.at(-1)!;
+  out.push([last.latitude, last.longitude, last.smoothedSpeedKph / 1.609344]);
+  return out;
+}
 
 /** Lets the browser breathe between trips, off its busy stretches when it can. */
 function idle(): Promise<void> {
@@ -114,6 +134,7 @@ export function useTripStats(trips: readonly CardTrip[]): ReadonlyMap<string, Tr
             },
             limits: cachedAdherence === undefined ? 'pending' : cachedAdherence ? 'ready' : 'unavailable',
             risk: assessRisk({ summary, adherence: cachedAdherence }),
+            route: previewRoute(track.points),
           }));
 
           const [startLabel, endLabel] = await Promise.all([

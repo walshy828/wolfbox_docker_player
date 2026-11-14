@@ -110,7 +110,7 @@ function Report({
           <dt>Within limit</dt>
           <dd>
             {headline === null ? <span className="muted">&mdash;</span> : share(headline)}
-            {headline !== null && restingOnGuesses && <small>assumed limits</small>}
+            {headline !== null && restingOnGuesses && <small className="stats-note">assumed limits</small>}
           </dd>
         </div>
         <div>

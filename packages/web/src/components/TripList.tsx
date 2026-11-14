@@ -10,6 +10,7 @@ import {
   type TripFilter, type TripSort,
 } from '../tripView.ts';
 import { ConfirmInline, DeleteButton } from './ConfirmInline.tsx';
+import { RiskRing, RiskReasons } from './Risk.tsx';
 
 export type { TripFilter, TripSort };
 
@@ -36,64 +37,6 @@ interface Props {
 
 const DAY: Intl.DateTimeFormatOptions = { weekday: 'short', month: 'short', day: 'numeric' };
 const CLOCK: Intl.DateTimeFormatOptions = { hour: 'numeric', minute: '2-digit' };
-
-/** Circumference of the list's score ring, at r=15. */
-const RING = 2 * Math.PI * 15;
-
-const BAND_LABEL = { low: 'Low risk', moderate: 'Some risk', high: 'High risk' } as const;
-
-/**
- * The drive's risk score as a small ring, coloured by band. A dashed ring is a
- * score made before speed limits were known, so a provisional 95 cannot be
- * mistaken for a final one.
- */
-function RiskRing({ entry }: { entry?: TripStatsEntry }) {
-  if (!entry || entry.status === 'pending') return <span className="risk-ring risk-ring--pending" aria-hidden="true" />;
-  if (entry.status !== 'ready' || !entry.risk) return <span className="risk-ring risk-ring--none" aria-hidden="true" />;
-  const { score, band, includesSpeeding } = entry.risk;
-  const provisional = !includesSpeeding && entry.limits === 'pending';
-  return (
-    <svg
-      className={`risk-ring risk-ring--${band}${provisional ? ' risk-ring--provisional' : ''}`}
-      viewBox="0 0 36 36" width="36" height="36" role="img"
-      aria-label={`Score ${score} of 100, ${BAND_LABEL[band]}${provisional ? ', speed limits still loading' : ''}`}
-    >
-      <circle className="risk-ring-track" cx="18" cy="18" r="15" />
-      <circle
-        className="risk-ring-value" cx="18" cy="18" r="15"
-        strokeDasharray={RING} strokeDashoffset={RING * (1 - score / 100)}
-        transform="rotate(-90 18 18)"
-      />
-      <text x="18" y="22.5" textAnchor="middle">{score}</text>
-    </svg>
-  );
-}
-
-/** The two factors that cost the most, as chips, so the list says why as well as how much. */
-function RiskReasons({ entry }: { entry?: TripStatsEntry }) {
-  if (!entry || entry.status !== 'ready' || !entry.risk) return null;
-  const { factors } = entry.risk;
-  if (factors.length === 0) {
-    return entry.risk.includesSpeeding
-      ? <span className="reasons"><span className="reason reason--clean">Clean drive</span></span>
-      : null;
-  }
-  const shown = factors.slice(0, 2);
-  return (
-    <span className="reasons">
-      {shown.map((factor) => (
-        <span key={factor.key} className={`reason reason--${factor.severity}`} title={factor.detail}>
-          {factor.label}
-        </span>
-      ))}
-      {factors.length > shown.length && (
-        <span className="reason reason--more" title={factors.slice(2).map((f) => f.label).join(', ')}>
-          +{factors.length - shown.length}
-        </span>
-      )}
-    </span>
-  );
-}
 
 /** Distance, speeds and route, once the background queue has reached this trip. */
 function TripFigures({ entry, minutes }: { entry?: TripStatsEntry; minutes: number }) {

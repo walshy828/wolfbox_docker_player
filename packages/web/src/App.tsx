@@ -16,6 +16,7 @@ import { RouteMap } from './components/RouteMap.tsx';
 import { DualPlayer } from './components/DualPlayer.tsx';
 import { ClipStrip } from './components/ClipStrip.tsx';
 import { DriveTimeline } from './components/DriveTimeline.tsx';
+import { DriveOverview } from './components/DriveOverview.tsx';
 import { SummaryPanel } from './components/SummaryPanel.tsx';
 import { AdherencePanel } from './components/AdherencePanel.tsx';
 import { SafetyPanel } from './components/SafetyPanel.tsx';
@@ -65,6 +66,9 @@ export function App() {
   const [layout, setLayout] = useState<CameraLayout>('split');
   const [filter, setFilter] = useState<TripFilter>('drives');
   const [sort, setSort] = useState<TripSort>('newest');
+  /** The overview leads with the drives worth watching. */
+  const [overviewSort, setOverviewSort] = useState<TripSort>('riskiest');
+  const [view, setView] = useState<'drives' | 'review'>('drives');
   const [expanded, setExpanded] = useState<Expanded>(null);
   const [error, setError] = useState<string | null>(null);
   const [checkedIds, setCheckedIds] = useState<ReadonlySet<string>>(() => new Set());
@@ -133,6 +137,7 @@ export function App() {
       if (!next) return;
       setCard(next);
       setTrip(null);
+      setView('drives');
       setTrack(null);
       setCheckedIds(new Set());
     } catch (cause) {
@@ -268,20 +273,36 @@ export function App() {
     [track, limits],
   );
 
+  const openTrip = useCallback((next: CardTrip) => { setTrip(next); setView('review'); }, []);
+
   const blocker = directoryPickerBlocker();
   const drift = describeCameraDrift(card?.cameraUtcOffsetMs);
 
   return (
     <div className="app" data-theme={theme}>
-      <header className="app-bar">
-        <h1>WolfBox Player</h1>
-        <button className="primary" onClick={openCard} disabled={blocker !== null}>
-          {card ? 'Open another card' : 'Open SD card'}
-        </button>
-        {card && <span className="card-name">{card.name} · {card.clips.length} clips</span>}
+      <header className="app-bar glass">
+        <div className="brand">
+          <BrandMark />
+          <h1>WolfBox</h1>
+        </div>
+        {card && (
+          <nav className="view-switch" aria-label="View">
+            {([['drives', 'Drives'], ['review', 'Review']] as const).map(([value, label]) => (
+              <button
+                key={value}
+                className={view === value ? 'selected' : ''}
+                aria-current={view === value ? 'page' : undefined}
+                onClick={() => setView(value)}
+              >
+                {label}
+              </button>
+            ))}
+          </nav>
+        )}
         <span className="spacer" />
+        {card && <span className="card-name" title={`${card.clips.length} clips`}>{card.name}</span>}
         <label className="zone-picker">
-          Times in
+          <span className="zone-picker-label">Times in</span>
           <select value={zone} onChange={(event) => setZone(event.target.value)}>
             {TIME_ZONES.map((option) => (
               <option key={option.value} value={option.value}>{option.label}</option>
@@ -290,23 +311,38 @@ export function App() {
         </label>
         {drift && zone !== 'camera' && <span className="badge" title={drift}>{drift}</span>}
         {mode && <PlaybackBadge mode={mode} onOverride={(next) => { setPlaybackMode(next); setMode(next); }} />}
+        <button className="primary" onClick={openCard} disabled={blocker !== null}>
+          {card ? 'Open card' : 'Open SD card'}
+        </button>
       </header>
 
       {blocker && <p className="notice notice--error">{blocker}</p>}
       {error && <p className="notice notice--error">{error}</p>}
 
       {!card && !blocker && (
-        <div className="empty-state">
-          <h2>Point the app at your dash cam card</h2>
+        <div className="empty-state glass">
+          <BrandMark size={56} />
+          <h2>Review your dash cam drives</h2>
           <p>
-            Plug the SD card in, choose <strong>Open SD card</strong>, and pick the card in the
-            folder dialog. Your footage is never uploaded &mdash; the clips are read straight
-            off the card and played from it.
+            Plug in the SD card and open it. Every drive is scored for speeding, hard
+            braking, hard acceleration and sharp turns, so the ones worth watching are at
+            the top. Footage is read straight off the card and never uploaded.
           </p>
+          <button className="primary large" onClick={openCard}>Open SD card</button>
         </div>
       )}
 
-      {card && (
+      {card && view === 'drives' && (
+        <main className="overview-scroll">
+          <DriveOverview
+            drives={drives} events={events} stats={tripStats}
+            sort={overviewSort} onSortChange={setOverviewSort}
+            onOpen={openTrip} time={time} theme={theme}
+          />
+        </main>
+      )}
+
+      {card && view === 'review' && (
         <main
           className="layout"
           data-trips={pinned.trips ? 'pinned' : 'auto'}
@@ -520,6 +556,23 @@ export function App() {
         </main>
       )}
     </div>
+  );
+}
+
+function BrandMark({ size = 28 }: { size?: number }) {
+  return (
+    <svg className="brand-mark" viewBox="0 0 32 32" width={size} height={size} aria-hidden="true">
+      <defs>
+        <linearGradient id="brand-grad" x1="0" y1="0" x2="1" y2="1">
+          <stop offset="0" stopColor="#5ac8fa" />
+          <stop offset="1" stopColor="#0a63ff" />
+        </linearGradient>
+      </defs>
+      <rect x="1" y="1" width="30" height="30" rx="9" fill="url(#brand-grad)" />
+      <path d="M8 20.5 C11 13, 16 11.5, 24 12" fill="none" stroke="#fff" strokeWidth="2.6" strokeLinecap="round" />
+      <circle cx="24" cy="12" r="2.6" fill="#fff" />
+      <circle cx="8" cy="20.5" r="2" fill="#fff" opacity="0.7" />
+    </svg>
   );
 }
 

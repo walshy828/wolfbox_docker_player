@@ -173,17 +173,31 @@ Clips are 60 s, named `YYYY_MM_DD_HHMMSS_<cam>[_b].MP4`.
 
 ## Using it
 
-The window is three columns that scroll independently, so a long trip list can
-never push the player or the map out of view:
+Opening a card lands on **Drives**: the whole card at a glance. The header
+gives the average score, how many drives were high risk, and the card's
+totals -- distance, driving time, time over the limit, hard events and top
+speed. Below it every drive is a card with its route drawn in speed colours,
+its score ring, where it went, its figures and the reasons it lost points.
+They sort riskiest first by default and filter by risk band; parking events
+are folded away at the bottom. While the card is still being read the header
+says how far it has got, and scores made before speed limits arrive are drawn
+with a dashed ring.
+
+Opening a drive goes to **Review**, three columns that scroll independently, so
+a long trip list can never push the player or the map out of view:
 
 - **Left** — trips, filterable by drives / parking events and sortable by
-  newest (the default), **riskiest**, oldest or longest. Each drive shows its
-  risk score as a ring, where it went, its distance, top and average speed,
-  time over the limit, and the two things that cost it the most points.
+  newest (the default), riskiest, oldest or longest, for switching drives
+  without going back to the overview.
 - **Centre** — front and rear video (side by side, picture-in-picture, or one
   camera), pinned in place, with the drive timeline under it; the trip
   summary scrolls beneath that.
 - **Right** — the route map, speed readout and colour legend.
+
+The interface is frosted glass over a tinted backdrop and follows the system's
+light or dark setting. The map's OpenStreetMap tiles are muted in light mode
+and inverted to a dark basemap in dark mode, so the speed-coloured route is
+the loudest thing on it.
 
 The video and the map each have an expand control that fills the window, and
 Escape or the collapse control returns them. Expanding applies fixed
