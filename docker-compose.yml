@@ -6,6 +6,11 @@ services:
       - "8088:8080"
     volumes:
       - wolfbox-cache:/cache
+      # The drive archive: a SQLite database of every imported drive, and the
+      # video of any drive imported with it. To keep it on a NAS, replace the
+      # named volume with a path to the share, e.g.
+      #   - /mnt/nas/wolfbox:/data
+      - wolfbox-data:/data
       # Only needed for the mounted-path fallback: Firefox, or running the
       # service on a different machine from the card. Chrome and Edge read the
       # card directly through the browser and need no mount at all.
@@ -17,3 +22,4 @@ services:
 
 volumes:
   wolfbox-cache:
+  wolfbox-data:

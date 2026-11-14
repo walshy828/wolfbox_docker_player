@@ -15,6 +15,8 @@ this project exists to serve, the browser cannot play the files as recorded.
   4. /api/geocode    proxies Nominatim so the trip list can show a place name
                      for where a drive started and ended, rather than raw
                      coordinates.
+  5. /api/archive    keeps drives once they leave the card: their data in
+                     SQLite and, optionally, their video. See archive.py.
 
 The speed-limit and geocoding proxies are here rather than in the browser for
 three reasons: they can cache to disk across sessions and across users, they
@@ -46,6 +48,8 @@ from pathlib import Path
 from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
+
+import archive
 
 log = logging.getLogger("wolfbox")
 
@@ -100,6 +104,8 @@ CLIP_FOLDERS = (
 MEDIA_ROOTS = ("/media", "/run/media", "/mnt/chromeos/removable", "/Volumes", "/mnt")
 
 app = FastAPI(title="WolfBox Player")
+archive.init()
+app.include_router(archive.router)
 
 
 def has_vaapi() -> bool:
@@ -190,6 +196,26 @@ async def transcode(request: Request, width: int = Query(1280, ge=320, le=3840))
     finally:
         source.unlink(missing_ok=True)
 
+    return FileResponse(target, media_type="video/mp4")
+
+
+@app.get("/api/archive/trips/{trip_id}/clips/{name}/proxy")
+async def archived_proxy(trip_id: str, name: str, width: int = Query(1280, ge=320, le=3840)) -> FileResponse:
+    """An archived clip as H.264, for browsers that cannot decode the original.
+
+    The clip is already on the server, so unlike /api/transcode nothing is
+    uploaded; the proxy is cached under the clip's own identity.
+    """
+    if shutil.which("ffmpeg") is None:
+        raise HTTPException(status_code=503, detail="ffmpeg is not installed.")
+    source = archive.stored_clip_path(trip_id, name)
+    key = hashlib.blake2b(f"{source}:{source.stat().st_size}".encode(), digest_size=16).hexdigest()
+    target = CACHE_DIR / f"archive-{key}-{width}.mp4"
+    if not target.exists():
+        async with _transcode_lock:
+            if not target.exists():
+                await run_ffmpeg(source, target, width)
+        prune_cache()
     return FileResponse(target, media_type="video/mp4")
 
 

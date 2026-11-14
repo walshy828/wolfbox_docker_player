@@ -19,11 +19,14 @@ RUN apt-get update \
 WORKDIR /app
 COPY server/requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
-COPY server/app.py .
+COPY server/app.py server/archive.py ./
 COPY --from=web /app/packages/web/dist ./static
 
 ENV WOLFBOX_CACHE=/cache
-VOLUME ["/cache"]
+# The drive archive: SQLite plus any video imported with it. Mount something
+# durable here -- a named volume, or a NAS share.
+ENV WOLFBOX_DATA=/data
+VOLUME ["/cache", "/data"]
 EXPOSE 8080
 
 HEALTHCHECK --interval=30s --timeout=3s \

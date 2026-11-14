@@ -1,9 +1,13 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { assessRisk } from '@wolfbox/telemetry';
 import {
-  pickCard, partitionTrips, directoryPickerBlocker, ensureWritable, removeClipsFromCard,
-  type Card, type CardClip, type CardTrip,
+  pickCard, partitionTrips, directoryPickerBlocker, ensureWritable, removeClipsFromCard, isCardTrip,
+  type Card, type CardClip, type CardTrip, type ReviewTrip,
 } from './card.ts';
+import {
+  archiveStatus, listArchived, listDrivers, addDriver, setTripDriver, deleteArchived, toReviewTrip, toStatsEntry,
+  type ArchiveStatus, type ArchivedTrip, type Driver,
+} from './archive.ts';
 import {
   clipsInPair, clipsInTrips, deleteClips, findSuccessorTrip, successorClipIndex, tripTouched,
 } from './deletion.ts';
@@ -17,6 +21,8 @@ import { DualPlayer } from './components/DualPlayer.tsx';
 import { ClipStrip } from './components/ClipStrip.tsx';
 import { DriveTimeline } from './components/DriveTimeline.tsx';
 import { DriveOverview } from './components/DriveOverview.tsx';
+import { ImportSheet } from './components/ImportSheet.tsx';
+import { ConfirmInline } from './components/ConfirmInline.tsx';
 import { SummaryPanel } from './components/SummaryPanel.tsx';
 import { AdherencePanel } from './components/AdherencePanel.tsx';
 import { SafetyPanel } from './components/SafetyPanel.tsx';
@@ -48,7 +54,16 @@ type Expanded = 'video' | 'map' | null;
 
 export function App() {
   const [card, setCard] = useState<Card | null>(null);
-  const [trip, setTrip] = useState<CardTrip | null>(null);
+  const [trip, setTrip] = useState<ReviewTrip | null>(null);
+  /** Where drives come from: the card in the reader, or the archive on the service. */
+  const [source, setSource] = useState<'card' | 'archive'>('card');
+  /** Null until the service answers; stays null when there is no archive to use. */
+  const [archive, setArchive] = useState<ArchiveStatus | null>(null);
+  const [archived, setArchived] = useState<ArchivedTrip[]>([]);
+  const [drivers, setDrivers] = useState<Driver[]>([]);
+  /** Open while choosing drives to save; holds the drives to start with ticked. */
+  const [importing, setImporting] = useState<{ preselected?: string[] } | null>(null);
+  const [confirmRemove, setConfirmRemove] = useState(false);
   const [track, setTrack] = useState<TripTrack | null>(null);
   const [progress, setProgress] = useState<{ done: number; total: number } | null>(null);
   const [clipIndex, setClipIndex] = useState(0);
@@ -104,10 +119,28 @@ export function App() {
   const theme = useTheme();
   const { status: limitStatus, limits } = useTripLimits(track, limitsOpen);
 
+  // Archived drives carry the offset of the card they came from.
+  const cameraUtcOffsetMs = source === 'archive'
+    ? (trip?.archived?.cameraOffsetMs ?? archived.find((a) => a.cameraOffsetMs !== null)?.cameraOffsetMs ?? undefined)
+    : card?.cameraUtcOffsetMs;
   const time: TimeContext = useMemo(
-    () => ({ zone, cameraUtcOffsetMs: card?.cameraUtcOffsetMs }),
-    [zone, card?.cameraUtcOffsetMs],
+    () => ({ zone, cameraUtcOffsetMs }),
+    [zone, cameraUtcOffsetMs],
   );
+
+  const refreshArchive = useCallback(async () => {
+    const status = await archiveStatus();
+    setArchive(status);
+    if (!status) return;
+    try {
+      const [trips, people] = await Promise.all([listArchived(), listDrivers()]);
+      setArchived(trips);
+      setDrivers(people);
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : String(cause));
+    }
+  }, []);
+  useEffect(() => { void refreshArchive(); }, [refreshArchive]);
 
   useEffect(() => { void detectPlaybackMode().then(setMode); }, []);
 
@@ -121,14 +154,25 @@ export function App() {
     return () => window.removeEventListener('keydown', onKey);
   }, [expanded]);
 
-  const { drives, events } = useMemo(
+  const cardTrips = useMemo(
     () => (card ? partitionTrips(card.trips) : { drives: [], events: [] }),
     [card],
   );
-  // Every trip in the list, not just the currently viewed one, so the sidebar
-  // can fill in distance, top speed, and start/end while the user browses.
-  const allTrips = useMemo(() => [...drives, ...events], [drives, events]);
-  const tripStats = useTripStats(allTrips);
+  // Every trip on the card, not just the one being viewed, so the lists can
+  // fill in distance, top speed, score and place names while the user browses.
+  const allCardTrips = useMemo(() => [...cardTrips.drives, ...cardTrips.events], [cardTrips]);
+  const cardStats = useTripStats(allCardTrips);
+
+  const archivedById = useMemo(() => new Map(archived.map((a) => [a.id, a])), [archived]);
+  const archiveTrips = useMemo(() => partitionTrips(archived.map(toReviewTrip)), [archived]);
+  const archiveStats = useMemo(
+    () => new Map(archived.map((a) => [a.id, toStatsEntry(a)] as const)),
+    [archived],
+  );
+
+  const { drives, events } = source === 'archive' ? archiveTrips : cardTrips;
+  const tripStats = source === 'archive' ? archiveStats : cardStats;
+  const archiveOn = archive !== null;
 
   const openCard = useCallback(async () => {
     setError(null);
@@ -136,6 +180,7 @@ export function App() {
       const next = await pickCard();
       if (!next) return;
       setCard(next);
+      setSource('card');
       setTrip(null);
       setView('drives');
       setTrack(null);
@@ -168,7 +213,12 @@ export function App() {
       // Put the vehicle on the map at the trip's starting point straight away,
       // before anything is played.
       setClockMs((existing) => existing ?? result.points[0]?.timestampMs ?? null);
+    }, (cause) => {
+      if (controller.signal.aborted) return;
+      setProgress(null);
+      setError(cause instanceof Error ? cause.message : String(cause));
     });
+    setConfirmRemove(false);
 
     return () => controller.abort();
   }, [trip]);
@@ -198,7 +248,7 @@ export function App() {
         // Only re-point the workspace when the delete actually reached the trip
         // being watched: every trip object is rebuilt, and swapping in an equal
         // one would reload the video and lose the playhead for nothing.
-        if (trip && tripTouched(trip, removedKeys)) {
+        if (trip && isCardTrip(trip) && tripTouched(trip, removedKeys)) {
           const successor = findSuccessorTrip(next.trips, trip, removedKeys);
           resumeClipIndex.current =
             successor ? successorClipIndex(successor, trip, clipIndex) : null;
@@ -223,14 +273,45 @@ export function App() {
   }, [card, trip, clipIndex]);
 
   const deleteTrips = useCallback(
-    (trips: CardTrip[]) => { void removeClips(clipsInTrips(trips)); },
+    (trips: ReviewTrip[]) => { void removeClips(clipsInTrips(trips.filter(isCardTrip))); },
     [removeClips],
   );
 
   const deleteClipAt = useCallback((index: number) => {
-    const pair = trip?.clips[index];
+    if (!trip || !isCardTrip(trip)) return;
+    const pair = trip.clips[index];
     if (pair) void removeClips(clipsInPair(pair));
   }, [removeClips, trip]);
+
+  /** Deleting is for the card. An archived drive is removed from the archive instead, from the review header. */
+  const canDelete = source === 'card' && trip !== null && isCardTrip(trip);
+
+  const removeFromArchive = useCallback(async (tripId: string) => {
+    try {
+      await deleteArchived(tripId);
+      setTrip(null);
+      setView('drives');
+      await refreshArchive();
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : String(cause));
+    }
+  }, [refreshArchive]);
+
+  const changeDriver = useCallback(async (tripId: string, driverId: number | null) => {
+    try {
+      const updated = await setTripDriver(tripId, driverId);
+      setArchived((all) => all.map((a) => (a.id === tripId ? updated : a)));
+      setTrip((current) => (current?.id === tripId ? toReviewTrip(updated) : current));
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : String(cause));
+    }
+  }, []);
+
+  const switchSource = useCallback((next: 'card' | 'archive') => {
+    setSource(next);
+    setTrip(null);
+    setCheckedIds(new Set());
+  }, []);
 
   const seek = useCallback((timestampMs: number) => {
     if (!track) return;
@@ -273,10 +354,14 @@ export function App() {
     [track, limits],
   );
 
-  const openTrip = useCallback((next: CardTrip) => { setTrip(next); setView('review'); }, []);
+  const openTrip = useCallback((next: ReviewTrip) => { setTrip(next); setView('review'); }, []);
 
   const blocker = directoryPickerBlocker();
   const drift = describeCameraDrift(card?.cameraUtcOffsetMs);
+
+  const hasSource = source === 'archive' ? archiveOn : card !== null;
+  const archivedTrip = trip?.archived ? archivedById.get(trip.id) ?? trip.archived : undefined;
+  const savedCopy = trip && !trip.archived ? archivedById.get(trip.id) : undefined;
 
   return (
     <div className="app" data-theme={theme}>
@@ -285,7 +370,7 @@ export function App() {
           <BrandMark />
           <h1>WolfBox</h1>
         </div>
-        {card && (
+        {hasSource && (
           <nav className="view-switch" aria-label="View">
             {([['drives', 'Drives'], ['review', 'Review']] as const).map(([value, label]) => (
               <button
@@ -300,7 +385,24 @@ export function App() {
           </nav>
         )}
         <span className="spacer" />
-        {card && <span className="card-name" title={`${card.clips.length} clips`}>{card.name}</span>}
+        {archiveOn && (card || archived.length > 0) && (
+          <div className="segmented source-switch" role="group" aria-label="Source">
+            <button
+              className={source === 'card' ? 'selected' : ''} aria-pressed={source === 'card'}
+              disabled={!card} onClick={() => switchSource('card')}
+              title={card ? `${card.name} · ${card.clips.length} clips` : 'No card open'}
+            >
+              SD card
+            </button>
+            <button
+              className={source === 'archive' ? 'selected' : ''} aria-pressed={source === 'archive'}
+              onClick={() => switchSource('archive')}
+            >
+              Archive <span className="count">{archived.length}</span>
+            </button>
+          </div>
+        )}
+        {!archiveOn && card && <span className="card-name" title={`${card.clips.length} clips`}>{card.name}</span>}
         <label className="zone-picker">
           <span className="zone-picker-label">Times in</span>
           <select value={zone} onChange={(event) => setZone(event.target.value)}>
@@ -319,7 +421,7 @@ export function App() {
       {blocker && <p className="notice notice--error">{blocker}</p>}
       {error && <p className="notice notice--error">{error}</p>}
 
-      {!card && !blocker && (
+      {!hasSource && !blocker && (
         <div className="empty-state glass">
           <BrandMark size={56} />
           <h2>Review your dash cam drives</h2>
@@ -328,21 +430,47 @@ export function App() {
             braking, hard acceleration and sharp turns, so the ones worth watching are at
             the top. Footage is read straight off the card and never uploaded.
           </p>
-          <button className="primary large" onClick={openCard}>Open SD card</button>
+          <div className="empty-actions">
+            <button className="primary large" onClick={openCard}>Open SD card</button>
+            {archiveOn && archived.length > 0 && (
+              <button className="large" onClick={() => switchSource('archive')}>
+                Browse archive · {archived.length} drive{archived.length === 1 ? '' : 's'}
+              </button>
+            )}
+          </div>
         </div>
       )}
 
-      {card && view === 'drives' && (
+      {hasSource && view === 'drives' && (
         <main className="overview-scroll">
           <DriveOverview
             drives={drives} events={events} stats={tripStats}
             sort={overviewSort} onSortChange={setOverviewSort}
             onOpen={openTrip} time={time} theme={theme}
+            source={source}
+            archived={archiveOn ? archivedById : undefined}
+            onImport={archiveOn && source === 'card' && card ? () => setImporting({}) : undefined}
           />
         </main>
       )}
 
-      {card && view === 'review' && (
+      {importing && card && (
+        <ImportSheet
+          drives={cardTrips.drives} preselected={importing.preselected}
+          archived={archivedById} stats={cardStats} drivers={drivers}
+          onAddDriver={async (name) => {
+            const driver = await addDriver(name);
+            setDrivers((all) => [...all.filter((d) => d.id !== driver.id), driver].sort((a, b) => a.name.localeCompare(b.name)));
+            return driver;
+          }}
+          cameraOffsetMs={card.cameraUtcOffsetMs}
+          time={time}
+          onClose={() => setImporting(null)}
+          onImported={() => void refreshArchive()}
+        />
+      )}
+
+      {hasSource && view === 'review' && (
         <main
           className="layout"
           data-trips={pinned.trips ? 'pinned' : 'auto'}
@@ -358,7 +486,7 @@ export function App() {
               onFilterChange={setFilter} onSortChange={setSort}
               selectedId={trip?.id ?? null} onSelect={setTrip}
               checkedIds={checkedIds} onCheckedChange={setCheckedIds}
-              onDelete={deleteTrips} deleting={deleting}
+              onDelete={source === 'card' ? deleteTrips : undefined} deleting={deleting}
               time={time} stats={tripStats}
               actions={
                 <PinButton
@@ -445,8 +573,57 @@ export function App() {
                 clipIndex={clipIndex} onClipIndexChange={setClipIndex}
                 seekRequest={seekRequest}
                 onClock={setClockMs} layout={layout}
-                onDeleteClip={deleteClipAt} deleting={deleting}
+                onDeleteClip={canDelete ? deleteClipAt : undefined} deleting={deleting}
               />
+            )}
+
+            {trip && archiveOn && (
+              <div className="archive-bar">
+                {archivedTrip ? (
+                  <>
+                    <span className="archive-pill">Archive</span>
+                    <label className="archive-driver">
+                      Driver
+                      <select
+                        value={archivedTrip.driverId ?? ''}
+                        onChange={(event) => void changeDriver(trip.id, event.target.value ? Number(event.target.value) : null)}
+                      >
+                        <option value="">Not assigned</option>
+                        {drivers.map((driver) => <option key={driver.id} value={driver.id}>{driver.name}</option>)}
+                      </select>
+                    </label>
+                    <span className="muted">
+                      {archivedTrip.clips.some((clip) => clip.stored) ? 'Video saved' : 'Drive data only'}
+                    </span>
+                    <span className="spacer" />
+                    {confirmRemove ? (
+                      <ConfirmInline
+                        question="this drive from the archive, with any saved video?"
+                        busy={false}
+                        onConfirm={() => void removeFromArchive(trip.id)}
+                        onCancel={() => setConfirmRemove(false)}
+                      />
+                    ) : (
+                      <button className="link danger-link" onClick={() => setConfirmRemove(true)}>Remove from archive</button>
+                    )}
+                  </>
+                ) : (
+                  <>
+                    <span className={savedCopy ? 'archive-pill archive-pill--saved' : 'archive-pill archive-pill--card'}>
+                      {savedCopy ? 'Saved' : 'Only on card'}
+                    </span>
+                    <span className="muted">
+                      {savedCopy
+                        ? `In the archive${savedCopy.driverName ? ` · ${savedCopy.driverName}` : ''}${savedCopy.clips.some((c) => c.stored) ? ' · with video' : ''}`
+                        : 'This drive will be lost when the card loops over it.'}
+                    </span>
+                    <span className="spacer" />
+                    <button className="chip" onClick={() => setImporting({ preselected: [trip.id] })}>
+                      {savedCopy ? 'Save again…' : 'Save to archive…'}
+                    </button>
+                  </>
+                )}
+              </div>
             )}
 
             {track && track.points.length > 1 && (
@@ -475,7 +652,7 @@ export function App() {
               {trip && (
                 <ClipStrip
                   trip={trip} clipIndex={clipIndex} onSelect={setClipIndex}
-                  onDelete={deleteClipAt} deleting={deleting} time={time}
+                  onDelete={canDelete ? deleteClipAt : undefined} deleting={deleting} time={time}
                 />
               )}
             </div>

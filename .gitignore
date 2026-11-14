@@ -5,3 +5,4 @@ dist/
 fixtures/*.MP4
 __pycache__/
 .venv/
+server/data/

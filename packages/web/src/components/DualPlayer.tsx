@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState, type KeyboardEvent, type PointerEvent } from 'react';
-import type { CardTrip } from '../card.ts';
+import type { ReviewTrip } from '../card.ts';
 import type { PlaybackMode } from '../codec.ts';
 import { openClip, type ClipSource } from '../clipSource.ts';
 import { PlayerOverlay } from './PlayerOverlay.tsx';
@@ -49,7 +49,7 @@ export function clipTime(seconds: number): string {
 }
 
 interface Props {
-  trip: CardTrip;
+  trip: ReviewTrip;
   clipStarts: { front?: number; rear?: number }[];
   mode: PlaybackMode;
   clipIndex: number;
@@ -64,7 +64,8 @@ interface Props {
   onClock: (timestampMs: number | null) => void;
   layout: 'split' | 'pip' | 'front' | 'rear';
   /** Deletes the clip on screen, front and rear together. */
-  onDeleteClip: (index: number) => void;
+  /** Absent for archived drives, whose clips are not on a card. */
+  onDeleteClip?: (index: number) => void;
   deleting: boolean;
 }
 
@@ -427,8 +428,8 @@ export function DualPlayer({
           onPrevClip={() => onClipIndexChange(Math.max(0, clipIndex - 1))}
           onNextClip={() => onClipIndexChange(Math.min(trip.clips.length - 1, clipIndex + 1))}
           onRateChange={setRate}
-          onRequestDelete={() => setConfirmingDelete(true)}
-          onConfirmDelete={() => { setConfirmingDelete(false); onDeleteClip(clipIndex); }}
+          onRequestDelete={onDeleteClip ? () => setConfirmingDelete(true) : undefined}
+          onConfirmDelete={() => { setConfirmingDelete(false); onDeleteClip?.(clipIndex); }}
           onCancelDelete={() => setConfirmingDelete(false)}
         />
       </div>

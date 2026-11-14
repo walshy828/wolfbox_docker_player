@@ -1,14 +1,15 @@
 import { useState } from 'react';
-import type { CardTrip } from '../card.ts';
+import type { ReviewTrip } from '../card.ts';
 import { formatLocal, type TimeContext } from '../time.ts';
 import { CollapsibleSection } from './CollapsibleSection.tsx';
 import { ConfirmInline, DeleteButton } from './ConfirmInline.tsx';
 
 interface Props {
-  trip: CardTrip;
+  trip: ReviewTrip;
   clipIndex: number;
   onSelect: (index: number) => void;
-  onDelete: (index: number) => void;
+  /** Absent for archived drives: their clips are not on a card to delete. */
+  onDelete?: (index: number) => void;
   deleting: boolean;
   time: TimeContext;
 }
@@ -38,7 +39,7 @@ export function ClipStrip({ trip, clipIndex, onSelect, onDelete, deleting, time 
                   <ConfirmInline
                     question="this clip?"
                     busy={deleting}
-                    onConfirm={() => { setConfirming(null); onDelete(index); }}
+                    onConfirm={() => { setConfirming(null); onDelete?.(index); }}
                     onCancel={() => setConfirming(null)}
                   />
                 ) : (
@@ -53,10 +54,12 @@ export function ClipStrip({ trip, clipIndex, onSelect, onDelete, deleting, time 
                         {pair.kind === 'event' && <span className="badge badge--warn">event</span>}
                       </span>
                     </button>
-                    <DeleteButton
-                      label="this clip"
-                      onClick={() => setConfirming(index)}
-                    />
+                    {onDelete && (
+                      <DeleteButton
+                        label="this clip"
+                        onClick={() => setConfirming(index)}
+                      />
+                    )}
                   </div>
                 )}
               </li>

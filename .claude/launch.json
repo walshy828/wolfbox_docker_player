@@ -4,7 +4,10 @@
     {
       "name": "web",
       "runtimeExecutable": "sh",
-      "runtimeArgs": ["-c", "WOLFBOX_API=http://localhost:8088 npm run dev -w @wolfbox/web -- --port 5174 --strictPort"],
+      "runtimeArgs": [
+        "-c",
+        "WOLFBOX_API=http://localhost:8088 npm run dev -w @wolfbox/web -- --port 5174 --strictPort"
+      ],
       "port": 5174
     }
   ]

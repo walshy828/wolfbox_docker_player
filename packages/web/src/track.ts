@@ -3,7 +3,9 @@ import {
   type CleanPoint, type TelemetryPoint, type TripSummary,
 } from '@wolfbox/telemetry';
 import { cacheKey, readCached, writeCached } from './cache.ts';
-import type { CardTrip } from './card.ts';
+import { archivedClipStarts, loadArchivedPoints } from './archive.ts';
+import { isRemoteClip, type ClipHandle } from './card.ts';
+import type { ReviewTrip } from './card.ts';
 
 /** Bump whenever decoding changes what a clip's points contain. */
 const DECODER_VERSION = 'v2';
@@ -44,10 +46,16 @@ async function clipTelemetry(handle: FileSystemFileHandle, stride = 1): Promise<
  * making the user wait out the whole trip.
  */
 export async function loadTripTrack(
-  trip: CardTrip,
+  trip: ReviewTrip,
   options: { signal?: AbortSignal; onProgress?: (done: number, total: number) => void } = {},
 ): Promise<TripTrack> {
   const { signal, onProgress } = options;
+  if (trip.archived) {
+    // The archive stores the cleaned track, so it is used as it comes.
+    const archivedPoints = await loadArchivedPoints(trip.id, signal);
+    onProgress?.(trip.clips.length, trip.clips.length);
+    return { points: archivedPoints, summary: summarize(archivedPoints), clipStarts: archivedClipStarts(trip) };
+  }
   const points: TelemetryPoint[] = [];
   const clipStarts: TripTrack['clipStarts'] = [];
 
@@ -91,7 +99,7 @@ export async function loadTripTrack(
  * this a fixless clip anchors playback at nothing and the map stops tracking
  * for its whole minute.
  */
-function fillMissingStarts(clipStarts: TripTrack['clipStarts'], trip: CardTrip): void {
+function fillMissingStarts(clipStarts: TripTrack['clipStarts'], trip: ReviewTrip): void {
   let offsetMs: number | undefined;
   for (const [i, starts] of clipStarts.entries()) {
     const known = starts.front ?? starts.rear;
@@ -112,7 +120,8 @@ function fillMissingStarts(clipStarts: TripTrack['clipStarts'], trip: CardTrip):
 }
 
 /** A truncated clip should not sink the trip it belongs to. */
-async function safeTelemetry(handle: FileSystemFileHandle, stride = 1): Promise<TelemetryPoint[]> {
+async function safeTelemetry(handle: ClipHandle, stride = 1): Promise<TelemetryPoint[]> {
+  if (isRemoteClip(handle)) return [];
   try {
     return await clipTelemetry(handle, stride);
   } catch {

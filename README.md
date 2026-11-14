@@ -27,7 +27,8 @@ npm install
 npm test                                    # telemetry parser
 npm run dev -w @wolfbox/web                 # UI on :5173, proxies /api to :8080
 WOLFBOX_API=http://localhost:8088 npm run dev -w @wolfbox/web   # ...or to the compose container
-(cd server && uvicorn app:app --port 8080)  # transcoder
+(cd server && WOLFBOX_DATA=./data uvicorn app:app --port 8080)  # service + archive
+(cd server && pip install -r requirements-dev.txt && pytest)        # service tests
 ```
 
 Inspect a card from the command line:
@@ -254,6 +255,43 @@ Speed changes beyond 1.3 g in a second (no road car manages that) are treated
 as a receiver artefact -- typically a new fix reading 0 then 104 km/h -- and
 ignored.
 
+### The archive
+
+A card is a rolling loop, so every drive on it is days from being overwritten.
+**Save to archive** (on the Drives screen, or under the video for one drive)
+copies drives into the service's archive, and the **SD card / Archive** switch
+in the header browses either. The archive works without a card in the reader.
+
+What is saved:
+
+- **Always**: the drive's data -- every 1 Hz GPS sample with speed, heading,
+  the raw accelerometer and the speed limit at that point, every hard stop,
+  launch, sharp turn and speeding stretch, the score with its reasons, the
+  summary and the place names. About 4,000 rows per hour of driving.
+- **Optionally**: the video, front and rear. About 9 GB per hour, which is why
+  it is a switch, with the size shown before you commit.
+
+A drive can be tagged with who was driving, at import or afterwards, and the
+archive filters by driver. Importing a drive again updates it rather than
+duplicating it, and video already saved at the right size is not sent again.
+Archived video plays straight from the service with seeking; browsers that
+cannot decode the camera's HEVC get an H.264 proxy made on the server.
+Deleting from the archive removes the drive's data and video together, and is
+the only delete an archived drive offers -- the card's own delete controls
+apply only to the card.
+
+Everything lives under `/data` in the container:
+
+```
+/data/wolfbox.sqlite                       drives, points, events, clips, drivers
+/data/media/YYYY/MM/DD/<drive>/<clip>.MP4  video, when saved
+```
+
+`docker-compose.yml` keeps it in a named volume; to keep it on a NAS, mount the
+share there instead (`- /mnt/nas/wolfbox:/data`). The SQLite file can be read
+with any SQLite tool -- `trips` has one row per drive with its distance, score,
+time over the limit and event counts; `points` and `events` have the detail.
+
 ### Time zones
 
 Dash cams are routinely set to the wrong zone -- the reference card was
@@ -366,5 +404,6 @@ present, every histogram bar is directly labelled, and a table view is offered.
 ```
 packages/telemetry/   MP4 box parser, gpmd decoder, cleaning, trips, summaries
 packages/web/         React + Leaflet UI
-server/               FastAPI + ffmpeg transcoder; also serves the built UI
+server/               FastAPI service: transcoding, speed limits, place names, the
+                      drive archive (archive.py); also serves the built UI
 ```

@@ -1,3 +1,4 @@
+import type { Trip } from '@wolfbox/telemetry';
 /**
  * Removing clips from the card.
  *
@@ -132,14 +133,14 @@ const plural = (count: number, noun: string) =>
   `${count} ${noun}${count === 1 ? '' : 's'}`;
 
 /** Confirmation copy: what is about to go, counted the way the user sees it. */
-export function describeTrips(trips: CardTrip[], noun = 'trip'): string {
+export function describeTrips(trips: Trip<unknown>[], noun = 'trip'): string {
   const clips = trips.reduce((total, trip) => total + trip.clips.length, 0);
   if (trips.length === 1) return `this ${noun} and its ${plural(clips, 'clip')}`;
   return `${plural(trips.length, noun)} and their ${plural(clips, 'clip')}`;
 }
 
 /** Sidebar summary of what is selected. */
-export function describeSelection(trips: CardTrip[]): string {
+export function describeSelection(trips: Trip<unknown>[]): string {
   const clips = trips.reduce((total, trip) => total + trip.clips.length, 0);
   return `${trips.length} selected · ${plural(clips, 'clip')}`;
 }

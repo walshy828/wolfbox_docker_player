@@ -3,10 +3,37 @@ import {
   type ClipRef, type Trip,
 } from '@wolfbox/telemetry';
 import { clipKey } from './deletion.ts';
+import type { ArchivedTrip } from './archive.ts';
 
 /** A clip on a card the user has granted access to. */
 export type CardClip = ClipRef<FileSystemFileHandle>;
 export type CardTrip = Trip<FileSystemFileHandle>;
+
+/** A clip whose video lives in the archive on the server, not on a card. */
+export interface RemoteClip {
+  kind: 'remote';
+  /** The original file, served with range support. */
+  url: string;
+  name: string;
+  size: number;
+  /** False when the drive was archived without its video. */
+  stored: boolean;
+}
+
+/** Anything the player can open: a file on the card, or a clip in the archive. */
+export type ClipHandle = FileSystemFileHandle | RemoteClip;
+
+/**
+ * A drive the review screen can show, from either source. Card trips are the
+ * common case; an archived one carries `archived`, and its clips are remote.
+ */
+export type ReviewTrip = Trip<ClipHandle> & { archived?: ArchivedTrip };
+
+export const isRemoteClip = (handle: ClipHandle): handle is RemoteClip =>
+  (handle as RemoteClip).kind === 'remote';
+
+/** True for a drive read from the card, which is the only kind that can be deleted from it. */
+export const isCardTrip = (trip: ReviewTrip): trip is CardTrip => !trip.archived;
 
 export interface Card {
   name: string;
@@ -148,9 +175,9 @@ export function removeClipsFromCard(card: Card, removedKeys: Set<string>): Card 
  * them as trips buries the real drives: the reference card has 54 drives and
  * 130 such events. They belong in their own list.
  */
-export function partitionTrips(trips: CardTrip[]): { drives: CardTrip[]; events: CardTrip[] } {
-  const drives: CardTrip[] = [];
-  const events: CardTrip[] = [];
+export function partitionTrips<T extends Trip<unknown>>(trips: T[]): { drives: T[]; events: T[] } {
+  const drives: T[] = [];
+  const events: T[] = [];
   for (const trip of trips) {
     if (isParkingEvent(trip)) events.push(trip);
     else drives.push(trip);
@@ -159,4 +186,4 @@ export function partitionTrips(trips: CardTrip[]): { drives: CardTrip[]; events:
 }
 
 /** True for the isolated one-minute impacts, as opposed to a real drive. */
-export const isParkingEvent = (trip: CardTrip) => trip.hasEvent && trip.clips.length <= 2;
+export const isParkingEvent = (trip: Trip<unknown>) => trip.hasEvent && trip.clips.length <= 2;

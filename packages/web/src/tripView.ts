@@ -1,9 +1,9 @@
-import type { CardTrip } from './card.ts';
+import type { ReviewTrip } from './card.ts';
 
 export type TripFilter = 'all' | 'drives' | 'events';
 export type TripSort = 'newest' | 'oldest' | 'longest' | 'riskiest';
 
-export const tripDurationMs = (trip: CardTrip) => trip.endLocalMs - trip.startLocalMs;
+export const tripDurationMs = (trip: ReviewTrip) => trip.endLocalMs - trip.startLocalMs;
 
 /**
  * Applies the sidebar's filter and sort.
@@ -13,13 +13,13 @@ export const tripDurationMs = (trip: CardTrip) => trip.endLocalMs - trip.startLo
  * clips are the ones about to be overwritten.
  */
 export function selectTrips(
-  drives: CardTrip[],
-  events: CardTrip[],
+  drives: ReviewTrip[],
+  events: ReviewTrip[],
   filter: TripFilter,
   sort: TripSort,
   /** A trip's risk score, 0-100 with lower riskier, once known. Needed for 'riskiest'. */
-  scoreOf: (trip: CardTrip) => number | undefined = () => undefined,
-): CardTrip[] {
+  scoreOf: (trip: ReviewTrip) => number | undefined = () => undefined,
+): ReviewTrip[] {
   const chosen =
     filter === 'drives' ? drives :
     filter === 'events' ? events :

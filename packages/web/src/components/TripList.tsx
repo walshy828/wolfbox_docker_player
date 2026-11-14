@@ -1,6 +1,6 @@
 import { useMemo, useState, type ReactNode } from 'react';
 import { formatDuration, kphToMph } from '@wolfbox/telemetry';
-import { isParkingEvent, type CardTrip } from '../card.ts';
+import { isParkingEvent, type ReviewTrip } from '../card.ts';
 import { describeSelection, describeTrips } from '../deletion.ts';
 import { formatLocal, type TimeContext } from '../time.ts';
 import { metersToMiles } from '../units.ts';
@@ -15,18 +15,19 @@ import { RiskRing, RiskReasons } from './Risk.tsx';
 export type { TripFilter, TripSort };
 
 interface Props {
-  drives: CardTrip[];
-  events: CardTrip[];
+  drives: ReviewTrip[];
+  events: ReviewTrip[];
   filter: TripFilter;
   sort: TripSort;
   onFilterChange: (filter: TripFilter) => void;
   onSortChange: (sort: TripSort) => void;
   selectedId: string | null;
-  onSelect: (trip: CardTrip) => void;
+  onSelect: (trip: ReviewTrip) => void;
   /** Ids ticked for a batch delete; empty while nothing is ticked. */
   checkedIds: ReadonlySet<string>;
   onCheckedChange: (ids: Set<string>) => void;
-  onDelete: (trips: CardTrip[]) => void;
+  /** Deletes from the card. Absent for archived drives, which are removed from the archive instead. */
+  onDelete?: (trips: ReviewTrip[]) => void;
   deleting: boolean;
   time: TimeContext;
   /** Distance, top speed, and start/end place, filled in progressively per trip. */
@@ -103,7 +104,7 @@ export function TripList({
   const grouped = sort === 'newest' || sort === 'oldest';
   const noun = filter === 'events' ? 'event' : 'drive';
 
-  const check = (trip: CardTrip, shiftKey: boolean) => {
+  const check = (trip: ReviewTrip, shiftKey: boolean) => {
     if (shiftKey) {
       onCheckedChange(rangeSelected(checkedIds, visible.map((t) => t.id), anchorId, trip.id));
     } else {
@@ -153,13 +154,15 @@ export function TripList({
             <option value="longest">Longest first</option>
           </select>
         </label>
-        <button
-          className={choosing ? 'chip selected' : 'chip'}
-          aria-pressed={choosing}
-          onClick={() => (choosing ? stopChoosing() : setChoosing(true))}
-        >
-          {choosing ? 'Done' : 'Select'}
-        </button>
+        {onDelete && (
+          <button
+            className={choosing ? 'chip selected' : 'chip'}
+            aria-pressed={choosing}
+            onClick={() => (choosing ? stopChoosing() : setChoosing(true))}
+          >
+            {choosing ? 'Done' : 'Select'}
+          </button>
+        )}
       </div>
 
       {choosing && checked.length > 0 && (
@@ -168,7 +171,7 @@ export function TripList({
             <ConfirmInline
               question={`${describeTrips(checked, noun)}?`}
               busy={deleting}
-              onConfirm={() => { setConfirming(null); onDelete(checked); }}
+              onConfirm={() => { setConfirming(null); onDelete?.(checked); }}
               onCancel={() => setConfirming(null)}
             />
           ) : (
@@ -204,7 +207,7 @@ export function TripList({
                     <ConfirmInline
                       question={`${describeTrips([trip], rowNoun)}?`}
                       busy={deleting}
-                      onConfirm={() => { setConfirming(null); onDelete([trip]); }}
+                      onConfirm={() => { setConfirming(null); onDelete?.([trip]); }}
                       onCancel={() => setConfirming(null)}
                     />
                   ) : (
@@ -236,11 +239,11 @@ export function TripList({
                           <RiskReasons entry={entry} />
                         </span>
                       </button>
-                      <DeleteButton
+                      {onDelete && <DeleteButton
                         className="icon-button trip-delete"
                         label={`this ${rowNoun} and all its clips`}
                         onClick={() => setConfirming({ kind: 'trip', id: trip.id })}
-                      />
+                      />}
                     </div>
                   )}
                 </li>

@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react';
 import { formatDuration, kphToMph } from '@wolfbox/telemetry';
-import type { CardTrip } from '../card.ts';
+import type { ReviewTrip } from '../card.ts';
 import type { RoutePreview, TripStatsEntry } from '../tripStats.ts';
 import { selectTrips, tripDurationMs, type TripSort } from '../tripView.ts';
 import { cardTotals, formatSpan, matchesBand, type BandFilter } from '../overview.ts';
@@ -8,6 +8,7 @@ import { colorForMph, type Theme } from '../speedScale.ts';
 import { formatLocal, type TimeContext } from '../time.ts';
 import { metersToMiles } from '../units.ts';
 import { RiskRing, RiskReasons, BAND_LABEL } from './Risk.tsx';
+import type { ArchivedTrip } from '../archive.ts';
 
 const DAY: Intl.DateTimeFormatOptions = { weekday: 'long', month: 'short', day: 'numeric' };
 const CLOCK: Intl.DateTimeFormatOptions = { hour: 'numeric', minute: '2-digit' };
@@ -22,28 +23,42 @@ const CLOCK: Intl.DateTimeFormatOptions = { hour: 'numeric', minute: '2-digit' }
  * anything. Opening a card goes to the review screen for that drive.
  */
 export function DriveOverview({
-  drives, events, stats, sort, onSortChange, onOpen, time, theme,
+  drives, events, stats, sort, onSortChange, onOpen, time, theme, source = 'card', archived, onImport,
 }: {
-  drives: CardTrip[];
-  events: CardTrip[];
+  source?: 'card' | 'archive';
+  /** What the archive holds, by trip id, when there is an archive. */
+  archived?: ReadonlyMap<string, ArchivedTrip>;
+  /** Opens the import sheet. Absent when there is nothing to import into, or from. */
+  onImport?: () => void;
+  drives: ReviewTrip[];
+  events: ReviewTrip[];
   stats: ReadonlyMap<string, TripStatsEntry>;
   sort: TripSort;
   onSortChange: (sort: TripSort) => void;
-  onOpen: (trip: CardTrip) => void;
+  onOpen: (trip: ReviewTrip) => void;
   time: TimeContext;
   theme: Theme;
 }) {
   const [band, setBand] = useState<BandFilter>('all');
   const [showEvents, setShowEvents] = useState(false);
+  /** '' for everyone, 'none' for drives with no driver set, else a driver's name. */
+  const [driver, setDriver] = useState('');
+  const driverNames = useMemo(
+    () => [...new Set(drives.map((trip) => trip.archived?.driverName).filter((n): n is string => !!n))].sort(),
+    [drives],
+  );
+  const byDriver = (trip: ReviewTrip) => !driver
+    || (driver === 'none' ? !trip.archived?.driverName : trip.archived?.driverName === driver);
 
-  const totals = useMemo(() => cardTotals(drives.map((d) => d.id), stats), [drives, stats]);
-  const visible = useMemo(() => selectTrips(drives, [], 'drives', sort, (trip) => {
+  const shown = useMemo(() => drives.filter(byDriver), [drives, driver]);
+  const totals = useMemo(() => cardTotals(shown.map((d) => d.id), stats), [shown, stats]);
+  const visible = useMemo(() => selectTrips(shown, [], 'drives', sort, (trip) => {
     const entry = stats.get(trip.id);
     return entry?.status === 'ready' ? entry.risk?.score : undefined;
-  }).filter((trip) => matchesBand(stats.get(trip.id), band)), [drives, stats, sort, band]);
+  }).filter((trip) => matchesBand(stats.get(trip.id), band)), [shown, stats, sort, band]);
 
   const grouped = sort === 'newest' || sort === 'oldest';
-  const sections: { day: string | null; trips: CardTrip[] }[] = [];
+  const sections: { day: string | null; trips: ReviewTrip[] }[] = [];
   for (const trip of visible) {
     const day = grouped ? formatLocal(trip.startLocalMs, time, DAY) : null;
     const last = sections.at(-1);
@@ -63,7 +78,7 @@ export function DriveOverview({
         <div className="hero-score">
           <AverageRing score={totals.averageScore} />
           <div>
-            <span className="eyebrow">Average score</span>
+            <span className="eyebrow">{source === 'archive' ? 'Archive · average score' : 'This card · average score'}</span>
             <strong className="hero-title">
               {totals.averageScore === null ? 'Scoring…'
                 : totals.byBand.high > 0
@@ -102,7 +117,25 @@ export function DriveOverview({
             </button>
           ))}
         </div>
+        {source === 'archive' && (
+          <label className="sort">
+            Driver
+            <select value={driver} onChange={(event) => setDriver(event.target.value)}>
+              <option value="">Everyone</option>
+              {driverNames.map((name) => <option key={name} value={name}>{name}</option>)}
+              <option value="none">Not assigned</option>
+            </select>
+          </label>
+        )}
         <span className="spacer" />
+        {onImport && (
+          <button className="save-button" onClick={onImport}>
+            <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true">
+              <path d="M8 2 V10 M4.5 6.5 L8 10 L11.5 6.5 M3 13.5 H13" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />
+            </svg>
+            Save to archive…
+          </button>
+        )}
         <label className="sort">
           Sort
           <select value={sort} onChange={(event) => onSortChange(event.target.value as TripSort)}>
@@ -116,7 +149,8 @@ export function DriveOverview({
 
       {visible.length === 0 && (
         <p className="overview-empty glass">
-          {band === 'all' ? 'No drives on this card.' : `No ${BAND_LABEL[band as Exclude<BandFilter, 'all'>].toLowerCase()} drives.`}
+          {band === 'all'
+            ? (source === 'archive' ? 'Nothing in the archive yet. Open a card and save drives to it.' : 'No drives on this card.') : `No ${BAND_LABEL[band as Exclude<BandFilter, 'all'>].toLowerCase()} drives.`}
         </p>
       )}
 
@@ -128,6 +162,7 @@ export function DriveOverview({
               <DriveCard
                 key={trip.id} trip={trip} entry={stats.get(trip.id)}
                 time={time} theme={theme} showDay={!grouped}
+                saved={source === 'card' ? archived?.get(trip.id) : undefined}
                 onOpen={() => onOpen(trip)}
               />
             ))}
@@ -186,9 +221,11 @@ function AverageRing({ score }: { score: number | null }) {
 }
 
 function DriveCard({
-  trip, entry, time, theme, showDay, onOpen,
+  trip, entry, time, theme, showDay, saved, onOpen,
 }: {
-  trip: CardTrip;
+  trip: ReviewTrip;
+  /** The archive's copy of a card drive, if it has been saved. */
+  saved?: ArchivedTrip;
   entry?: TripStatsEntry;
   time: TimeContext;
   theme: Theme;
@@ -217,6 +254,15 @@ function DriveCard({
           {band && <span className={`band-label band-label--${band}`}>{BAND_LABEL[band]}</span>}
           {trip.hasEvent && <span className="badge badge--warn">event</span>}
         </div>
+        {(saved || trip.archived) && (
+          <span className="drive-card-tags">
+            {saved && <span className="tag tag--saved">Saved{saved.clips.some((c) => c.stored) ? ' · video' : ''}</span>}
+            {trip.archived?.driverName && <span className="tag tag--driver">{trip.archived.driverName}</span>}
+            {trip.archived && (
+              <span className="tag">{trip.archived.clips.some((c) => c.stored) ? 'Video' : 'Data only'}</span>
+            )}
+          </span>
+        )}
         {route && <span className="drive-card-route">{route}</span>}
         <span className="drive-card-figures">
           {ready ? (

@@ -30,7 +30,7 @@ interface Props {
   onPrevClip: () => void;
   onNextClip: () => void;
   onRateChange: (rate: number) => void;
-  onRequestDelete: () => void;
+  onRequestDelete?: () => void;
   onConfirmDelete: () => void;
   onCancelDelete: () => void;
 }
@@ -138,7 +138,7 @@ export function PlayerOverlay({
                     ))}
                   </select>
                 </label>
-                <div className="overlay-settings-row">
+                {onRequestDelete && <div className="overlay-settings-row">
                   {confirmingDelete ? (
                     <ConfirmInline
                       question="this clip?"
@@ -149,7 +149,7 @@ export function PlayerOverlay({
                   ) : (
                     <button className="danger" onClick={onRequestDelete}>Delete clip</button>
                   )}
-                </div>
+                </div>}
               </div>
             )}
           </div>

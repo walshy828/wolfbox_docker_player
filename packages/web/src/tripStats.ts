@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { assessRisk, type DriveRisk, type TripAdherence, type TripSummary } from '@wolfbox/telemetry';
-import type { CardTrip } from './card.ts';
+import type { ReviewTrip } from './card.ts';
 import { loadTripTrack } from './track.ts';
 import { reverseGeocode } from './geocode.ts';
 import { computeAdherence } from './limits.ts';
@@ -61,6 +61,9 @@ function idle(): Promise<void> {
 /** Speeding results outlive a re-render of the list: the same trip is never looked up twice in a tab. */
 const adherenceCache = new Map<string, TripAdherence | null>();
 
+/** What the background pass learned about a drive's speeding, if it got that far. Null means no limits were available. */
+export const cachedAdherence = (tripId: string): TripAdherence | null | undefined => adherenceCache.get(tripId);
+
 /**
  * Fills in every trip's figures and risk score, in the background.
  *
@@ -73,7 +76,7 @@ const adherenceCache = new Map<string, TripAdherence | null>();
  * to one trip's tiles at a time (the local service caches every tile for a
  * month, so a card's second visit costs nothing upstream).
  */
-export function useTripStats(trips: readonly CardTrip[]): ReadonlyMap<string, TripStatsEntry> {
+export function useTripStats(trips: readonly ReviewTrip[]): ReadonlyMap<string, TripStatsEntry> {
   const [stats, setStats] = useState<ReadonlyMap<string, TripStatsEntry>>(() => new Map());
   const statsRef = useRef(stats);
   statsRef.current = stats;

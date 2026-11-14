@@ -1,4 +1,5 @@
 import type { PlaybackMode } from './codec.ts';
+import { isRemoteClip, type ClipHandle, type RemoteClip } from './card.ts';
 
 /**
  * Turns a clip on the card into something a <video> element can play.
@@ -19,10 +20,11 @@ export interface ClipSource {
 const inFlight = new Map<string, Promise<ClipSource>>();
 
 export async function openClip(
-  handle: FileSystemFileHandle,
+  handle: ClipHandle,
   mode: PlaybackMode,
   options: { width?: number; signal?: AbortSignal } = {},
 ): Promise<ClipSource> {
+  if (isRemoteClip(handle)) return openRemote(handle, mode, options.width);
   const file = await handle.getFile();
   const key = `${mode}:${options.width ?? 0}:${file.name}:${file.size}:${file.lastModified}`;
 
@@ -69,4 +71,15 @@ async function create(
   }
   const url = URL.createObjectURL(await response.blob());
   return { url, release: () => URL.revokeObjectURL(url) };
+}
+
+/**
+ * An archived clip plays straight from the service: the original when the
+ * browser decodes HEVC, otherwise the service's own proxy of it. Both are
+ * served with range support, so there is nothing to download first.
+ */
+function openRemote(clip: RemoteClip, mode: PlaybackMode, width?: number): ClipSource {
+  if (!clip.stored) throw new Error('This drive was archived without its video.');
+  const url = mode === 'direct' ? clip.url : `${clip.url}/proxy${width ? `?width=${width}` : ''}`;
+  return { url, release() {} };
 }
