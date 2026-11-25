@@ -1,0 +1,21 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32">
+  <!-- WolfBox: a dash cam (windshield mount, body, lens, recording light) on the app's blue tile. -->
+  <defs>
+    <linearGradient id="g" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#5ac8fa"/>
+      <stop offset="1" stop-color="#0a63ff"/>
+    </linearGradient>
+  </defs>
+  <rect x="1" y="1" width="30" height="30" rx="8" fill="url(#g)"/>
+  <!-- windshield mount -->
+  <rect x="11" y="4.5" width="10" height="2.4" rx="1.2" fill="#fff"/>
+  <rect x="14.6" y="6.4" width="2.8" height="3.6" fill="#fff"/>
+  <!-- body -->
+  <rect x="4.5" y="9.5" width="23" height="15.5" rx="4" fill="#fff"/>
+  <!-- lens -->
+  <circle cx="16" cy="17.25" r="5.6" fill="#0b3d91"/>
+  <circle cx="16" cy="17.25" r="3.3" fill="#1d6fe8"/>
+  <circle cx="14.7" cy="15.9" r="1.1" fill="#fff" opacity="0.85"/>
+  <!-- recording light -->
+  <circle cx="24.3" cy="12.9" r="1.5" fill="#ff3b30"/>
+</svg>
