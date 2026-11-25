@@ -19,7 +19,8 @@ RUN apt-get update \
 WORKDIR /app
 COPY server/requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
-COPY server/app.py server/archive.py ./
+# Every service module (tests stay out).
+COPY server/app.py server/archive.py server/segments.py ./
 COPY --from=web /app/packages/web/dist ./static
 
 ENV WOLFBOX_CACHE=/cache
