@@ -6,6 +6,7 @@ import {
 } from './card.ts';
 import {
   archiveStatus, listArchived, listDrivers, addDriver, updateTrip, assignDriver, importTrip, deleteArchived,
+  getArchived, segmentSources,
   toReviewTrip, toStatsEntry,
   type ArchiveStatus, type ArchivedTrip, type Driver, type TripPatch,
 } from './archive.ts';
@@ -24,6 +25,7 @@ import { DualPlayer } from './components/DualPlayer.tsx';
 import { DriveTimeline } from './components/DriveTimeline.tsx';
 import { DriveOverview } from './components/DriveOverview.tsx';
 import { ImportSheet } from './components/ImportSheet.tsx';
+import { SavedClips } from './components/SavedClips.tsx';
 import { HistoryView } from './components/HistoryView.tsx';
 import { ConfirmInline } from './components/ConfirmInline.tsx';
 import { SummaryPanel, type MomentKind } from './components/SummaryPanel.tsx';
@@ -346,32 +348,40 @@ export function App() {
    * in history yet is saved first, from the track and limits already loaded,
    * so annotating never waits on auto-save and never needs the archive sheet.
    */
+  const ensureSaved = useCallback(async () => {
+    if (!trip || archivedById.has(trip.id) || trip.archived) return;
+    if (!isCardTrip(trip) || !track?.summary) {
+      throw new Error('This drive has no GPS, so it cannot be saved to history.');
+    }
+    const entry = cardStats.get(trip.id);
+    await importTrip({
+      trip,
+      points: track.points,
+      summary: track.summary,
+      clipStarts: track.clipStarts,
+      adherence: limits?.adherence ?? null,
+      startLabel: entry?.status === 'ready' ? entry.startLabel : undefined,
+      endLabel: entry?.status === 'ready' ? entry.endLabel : undefined,
+      cameraOffsetMs: card?.cameraUtcOffsetMs,
+      driverId: null,
+    }, { withVideo: false });
+  }, [trip, archivedById, track, limits, cardStats, card]);
+
+  /** Re-reads the open drive from the archive (after a clip was saved or deleted). */
+  const reloadArchived = useCallback(async () => {
+    if (trip) upsertArchived(await getArchived(trip.id));
+  }, [trip, upsertArchived]);
+
   const annotate = useCallback(async (patch: TripPatch) => {
     if (!trip) return;
     try {
-      if (!archivedById.has(trip.id) && !trip.archived) {
-        if (!isCardTrip(trip) || !track?.summary) {
-          throw new Error('This drive has no GPS, so it cannot be saved to history.');
-        }
-        const entry = cardStats.get(trip.id);
-        await importTrip({
-          trip,
-          points: track.points,
-          summary: track.summary,
-          clipStarts: track.clipStarts,
-          adherence: limits?.adherence ?? null,
-          startLabel: entry?.status === 'ready' ? entry.startLabel : undefined,
-          endLabel: entry?.status === 'ready' ? entry.endLabel : undefined,
-          cameraOffsetMs: card?.cameraUtcOffsetMs,
-          driverId: null,
-        }, { withVideo: false });
-      }
+      await ensureSaved();
       upsertArchived(await updateTrip(trip.id, patch));
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : String(cause));
       throw cause;
     }
-  }, [trip, archivedById, track, limits, cardStats, card, upsertArchived]);
+  }, [trip, ensureSaved, upsertArchived]);
 
   /** One driver for every ticked drive in the list. Drives not yet in history are skipped and named. */
   const assignMany = useCallback(async (trips: ReviewTrip[], driverId: number | null) => {
@@ -770,6 +780,18 @@ export function App() {
                 <p className="notice">
                   Reading GPS from clip {progress.done} of {progress.total}...
                 </p>
+              )}
+              {trip && archiveOn && track && !isParkingEvent(trip) && (
+                <SavedClips
+                  tripId={trip.id}
+                  sources={segmentSources(trip, track.clipStarts)}
+                  clockMs={clockMs}
+                  saved={(archivedTrip ?? savedCopy)?.segments ?? []}
+                  mode={mode} time={time}
+                  ensureSaved={ensureSaved}
+                  onChanged={reloadArchived}
+                  onSeek={seek}
+                />
               )}
               {track?.summary && (
                 <SummaryPanel

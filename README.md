@@ -292,6 +292,30 @@ share there instead (`- /mnt/nas/wolfbox:/data`). The SQLite file can be read
 with any SQLite tool -- `trips` has one row per drive with its distance, score,
 time over the limit and event counts; `points` and `events` have the detail.
 
+### Saved clips
+
+Most of the time only a moment of a drive is worth keeping: the hard stop, the
+near miss, the bit to talk through with whoever was driving. **Saved clips**
+(under the drive timeline) keeps 15 s, 30 s, 1 min or 2 min of front and rear
+video, centred on the playhead or starting at it, with an optional name. Seek
+to the moment (the timeline's markers and Prev / Next land just before it),
+then **Save clip**.
+
+Only the two or three 60 s files that cover the window are read from the card;
+the service cuts the window out of them with ffmpeg by stream copy (no
+re-encode, so it is quick and nothing is lost) and keeps only the cut: a 30 s
+clip is tens of MB instead of the drive's gigabytes. The drive's data is saved
+to history first if it is not there yet. A drive already saved with its video
+is cut from the archive copy, without the card. Stream copy starts on a
+keyframe, so a clip may begin up to a second early.
+
+Saved clips are listed under the drive, play in place (through the H.264 proxy
+on browsers that need it), and can be renamed or deleted. Saving the whole
+drive's video is unchanged (**Save video to history…**). Clips live in
+`/data/media/YYYY/MM/DD/<drive>/segments/`; the API is in `server/segments.py`.
+Waypoint (a separate app) reads both whole-drive video and saved clips through
+this archive's API.
+
 ### History
 
 **History** (in the header once there is an archive) looks across every saved

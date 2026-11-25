@@ -50,6 +50,7 @@ from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 import archive
+import segments
 
 log = logging.getLogger("wolfbox")
 
@@ -105,7 +106,10 @@ MEDIA_ROOTS = ("/media", "/run/media", "/mnt/chromeos/removable", "/Volumes", "/
 
 app = FastAPI(title="WolfBox Player")
 archive.init()
+segments.init()
+segments.prune_abandoned()
 app.include_router(archive.router)
+app.include_router(segments.router)
 
 
 def has_vaapi() -> bool:
@@ -211,6 +215,23 @@ async def archived_proxy(trip_id: str, name: str, width: int = Query(1280, ge=32
     source = archive.stored_clip_path(trip_id, name)
     key = hashlib.blake2b(f"{source}:{source.stat().st_size}".encode(), digest_size=16).hexdigest()
     target = CACHE_DIR / f"archive-{key}-{width}.mp4"
+    if not target.exists():
+        async with _transcode_lock:
+            if not target.exists():
+                await run_ffmpeg(source, target, width)
+        prune_cache()
+    return FileResponse(target, media_type="video/mp4")
+
+
+@app.get("/api/archive/trips/{trip_id}/segments/{segment_id}/{camera}/proxy")
+async def segment_proxy(trip_id: str, segment_id: str, camera: str,
+                        width: int = Query(1280, ge=320, le=3840)) -> FileResponse:
+    """A saved clip as H.264, for browsers that cannot decode the camera's HEVC."""
+    if shutil.which("ffmpeg") is None:
+        raise HTTPException(status_code=503, detail="ffmpeg is not installed.")
+    source = segments.segment_path(trip_id, segment_id, camera)
+    key = hashlib.blake2b(f"{source}:{source.stat().st_size}".encode(), digest_size=16).hexdigest()
+    target = CACHE_DIR / f"segment-{key}-{width}.mp4"
     if not target.exists():
         async with _transcode_lock:
             if not target.exists():

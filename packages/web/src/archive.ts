@@ -41,6 +41,18 @@ export interface ArchivedClip {
   stored: boolean;
 }
 
+/** A saved clip: a short stretch of the drive's video, kept without the whole drive (server/segments.py). */
+export interface ArchivedSegment {
+  id: string;
+  /** Absolute, on the GPS clock like the drive's points. */
+  startMs: number;
+  endMs: number;
+  label: string | null;
+  createdMs: number;
+  ready: boolean;
+  files: { camera: 'front' | 'rear'; size: number }[];
+}
+
 /** A drive as the archive lists it: everything but the track. */
 export interface ArchivedTrip {
   id: string;
@@ -71,6 +83,8 @@ export interface ArchivedTrip {
   flagged: boolean;
   importedMs: number;
   clips: ArchivedClip[];
+  /** Saved clips, oldest first. */
+  segments?: ArchivedSegment[];
 }
 
 /** What can be changed on an archived drive after the fact. Fields left out are left alone. */
@@ -270,6 +284,91 @@ export async function importTrip(
   }
   options.onProgress?.({ phase: 'done', sentBytes: 0, totalBytes: 0 });
 }
+
+// --- saved clips -------------------------------------------------------------
+
+export const segmentUrl = (tripId: string, segmentId: string, camera: 'front' | 'rear', transcode = false) =>
+  `${BASE}/trips/${tripId}/segments/${segmentId}/${camera}${transcode ? '/proxy' : ''}`;
+
+/** One file the clip may be cut from: its absolute start, and how to read it if the server needs it. */
+export interface SegmentSource {
+  name: string;
+  camera: 'front' | 'rear';
+  startMs: number;
+  /** The file on the card; absent when only the archive has it. */
+  file?: () => Promise<File>;
+}
+
+/** Each camera file with a known start, from the trip's pairs and their measured starts. */
+export function segmentSources(trip: ReviewTrip, clipStarts: { front?: number; rear?: number }[]): SegmentSource[] {
+  return trip.clips.flatMap((pair, i) => (['front', 'rear'] as const).flatMap((camera) => {
+    const clip = pair[camera];
+    const startMs = clipStarts[i]?.[camera];
+    if (!clip || startMs === undefined || !Number.isFinite(startMs)) return [];
+    const handle = clip.handle;
+    const file = 'getFile' in handle ? () => (handle as FileSystemFileHandle).getFile() : undefined;
+    return [{ name: clip.name, camera, startMs, file }];
+  }));
+}
+
+/** The files a window needs, per the same rule the server applies (60 s files). Exported for tests. */
+export function coveringSources(sources: readonly SegmentSource[], startMs: number, endMs: number): SegmentSource[] {
+  return sources.filter((s) => s.startMs < endMs && s.startMs + 60_000 > startMs);
+}
+
+export interface SegmentProgress { phase: 'upload' | 'cut'; sentBytes: number; totalBytes: number }
+
+/**
+ * Saves [startMs, endMs] of the drive as a clip. The drive's data must already
+ * be in the archive. Only the files that cover the window are sent, and the
+ * server keeps just the cut, so a 30 s clip costs a few hundred MB of upload
+ * and a few tens of MB of disk rather than the whole drive.
+ */
+export async function saveSegment(
+  tripId: string,
+  window: { startMs: number; endMs: number; label?: string },
+  sources: readonly SegmentSource[],
+  options: { signal?: AbortSignal; onProgress?: (progress: SegmentProgress) => void } = {},
+): Promise<ArchivedSegment> {
+  const cover = coveringSources(sources, window.startMs, window.endMs);
+  if (!cover.length) throw new Error('No video covers that part of the drive.');
+  const made = await json<{ id: string; needed: string[] }>(await fetch(`${BASE}/trips/${tripId}/segments`, {
+    method: 'POST', headers: { 'content-type': 'application/json' }, signal: options.signal,
+    body: JSON.stringify({
+      startMs: Math.round(window.startMs), endMs: Math.round(window.endMs), label: window.label || null,
+      sources: cover.map(({ name, camera, startMs }) => ({ name, camera, startMs })),
+    }),
+  }));
+  const byName = new Map(cover.map((s) => [s.name, s]));
+  const files: [string, File][] = [];
+  for (const name of made.needed) {
+    const source = byName.get(name);
+    if (!source?.file) throw new Error('That part of the drive’s video is only on the SD card. Open the card to save a clip of it.');
+    files.push([name, await source.file()]);
+  }
+  const totalBytes = files.reduce((sum, [, file]) => sum + file.size, 0);
+  let sentBytes = 0;
+  options.onProgress?.({ phase: 'upload', sentBytes, totalBytes });
+  for (const [name, file] of files) {
+    await json(await fetch(`${BASE}/trips/${tripId}/segments/${made.id}/sources/${name}`, {
+      method: 'PUT', headers: { 'content-type': 'video/mp4' }, body: file, signal: options.signal,
+    }));
+    sentBytes += file.size;
+    options.onProgress?.({ phase: 'upload', sentBytes, totalBytes });
+  }
+  options.onProgress?.({ phase: 'cut', sentBytes, totalBytes });
+  return json<ArchivedSegment>(await fetch(`${BASE}/trips/${tripId}/segments/${made.id}/cut`, {
+    method: 'POST', signal: options.signal,
+  }));
+}
+
+export const renameSegment = (tripId: string, segmentId: string, label: string) =>
+  fetch(`${BASE}/trips/${tripId}/segments/${segmentId}`, {
+    method: 'PATCH', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ label }),
+  }).then((r) => json<ArchivedSegment>(r));
+
+export const deleteSegment = (tripId: string, segmentId: string) =>
+  fetch(`${BASE}/trips/${tripId}/segments/${segmentId}`, { method: 'DELETE' }).then((r) => json<unknown>(r));
 
 // --- reading back ------------------------------------------------------------
 

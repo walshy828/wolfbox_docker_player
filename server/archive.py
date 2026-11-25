@@ -333,7 +333,8 @@ def load_trip(db: sqlite3.Connection, trip_id: str) -> dict[str, Any]:
     clips = db.execute(
         "SELECT * FROM clips WHERE trip_id = ? ORDER BY start_local_ms, camera", (trip_id,)
     ).fetchall()
-    return trip_row_to_json(row, clips)
+    import segments  # noqa: PLC0415 -- segments imports this module
+    return dict(trip_row_to_json(row, clips), segments=segments.list_for(db, [trip_id]).get(trip_id, []))
 
 
 def stored_clip_path(trip_id: str, name: str) -> Path:
@@ -364,12 +365,16 @@ def status() -> dict[str, Any]:
         clips = db.execute(
             "SELECT COUNT(*), COALESCE(SUM(size), 0) FROM clips WHERE stored_path IS NOT NULL"
         ).fetchone()
+        saved = db.execute(
+            "SELECT COUNT(DISTINCT segment_id), COALESCE(SUM(size), 0) FROM segment_files"
+        ).fetchone()
     usage = shutil.disk_usage(DATA_DIR)
     return {
         "enabled": True,
         "trips": trips,
         "storedClips": clips[0],
-        "videoBytes": clips[1],
+        "savedClips": saved[0],
+        "videoBytes": clips[1] + saved[1],
         "freeBytes": usage.free,
     }
 
@@ -401,10 +406,12 @@ def list_trips() -> list[dict[str, Any]]:
     with connect() as db:
         rows = db.execute(TRIP_SELECT + " ORDER BY trips.start_local_ms DESC").fetchall()
         clips = db.execute("SELECT * FROM clips ORDER BY start_local_ms, camera").fetchall()
+        import segments  # noqa: PLC0415 -- segments imports this module
+        saved = segments.list_for(db)
     by_trip: dict[str, list[sqlite3.Row]] = {}
     for clip in clips:
         by_trip.setdefault(clip["trip_id"], []).append(clip)
-    return [trip_row_to_json(row, by_trip.get(row["id"], [])) for row in rows]
+    return [dict(trip_row_to_json(row, by_trip.get(row["id"], [])), segments=saved.get(row["id"], [])) for row in rows]
 
 
 @router.post("/trips")
